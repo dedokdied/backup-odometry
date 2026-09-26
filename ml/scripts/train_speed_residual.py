@@ -141,9 +141,19 @@ def load_dumps(paths: list[Path], group_col: str | None) -> dict:
             df["__group__"] = df[col].astype(str)
             grouping = f"column {col!r}"
         else:
-            # one dump file is one run, so the filename is the run identifier
-            df["__group__"] = p.stem
-            grouping = "source file name"
+            # One dump file is NOT one run. The repaired dumps concatenate
+            # several drives, visible as resets in t (measured: 6, 10 and 20
+            # runs in the three files). Grouping by filename alone would put
+            # neighbouring windows of the same drive on both sides of the
+            # split, so the run index is recovered from the resets.
+            if "t" in df.columns:
+                t = df["t"].to_numpy(dtype=np.float64)
+                run_idx = np.cumsum(np.concatenate(([0], np.diff(t) < 0)))
+                df["__group__"] = [f"{p.stem}#{int(r)}" for r in run_idx]
+                grouping = f"filename + {int(run_idx[-1]) + 1} run(s) split on t resets"
+            else:
+                df["__group__"] = p.stem
+                grouping = "source file name (no t column to split runs on)"
         df["__source__"] = p.name
         frames.append(df[list(required) + ["__group__", "__source__"]])
         print(f"  {p.name}: grouped by {grouping}")

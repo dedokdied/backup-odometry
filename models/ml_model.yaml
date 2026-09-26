@@ -1,17 +1,18 @@
 schema_version: 1
 model_id: speed_residual_v1
-created_utc: "2026-09-26T20:03:39Z"
+created_utc: "2026-09-26T20:32:10Z"
 author: ML side
 backend: linear
 provenance:
-  data_revision: "2 clean runs 2026-09-26"
+  data_revision: "3 dumps / 36 runs 2026-09-26"
   sources:
     - features_final_dump.csv
     - features_final_dump1 (1).csv
-  n_rows_raw: 155169
-  n_rows_used: 155169
-  n_runs: 2
-  cv: GroupKFold(2) over 2 runs
+    - features_final_dump2 (1).csv
+  n_rows_raw: 423201
+  n_rows_used: 423201
+  n_runs: 36
+  cv: GroupKFold(5) over 36 runs
   filter_wheels: true
 weights_file: speed_residual.bin
 weights_layout: "[W (3x16) row-major][b (3)], little-endian float64, 51 values"
@@ -39,39 +40,39 @@ outputs:
   - mu
 norm:
   mean:
-    - 0.048976589077676595
-    - 2.955881023650574
-    - -0.18011537622779036
+    - 0.04772061896368393
+    - 3.2492165165759643
+    - -0.23306112476038573
     - 0.0
-    - 0.26301528128133206
-    - 8.053951832401685
-    - 8.039698760859308
-    - 1.0377546921432694
-    - 0.459757865659133
-    - 0.5388358724227261
-    - 0.0009710840888837333
-    - 0.02500055190228074
-    - 0.23228596891594328
-    - 0.13990736645092772
-    - 24.24840575929827
-    - 0.3811203296358228
+    - 0.2632016408584125
+    - 8.971533833747014
+    - 8.96901466774096
+    - 1.0236353360858386
+    - 0.49615504963383356
+    - 0.5024069913348053
+    - 0.0006198303423385103
+    - 0.02500105589274364
+    - 0.24218852320554063
+    - 0.1410050416708869
+    - 25.420642644105428
+    - 0.41556330002882086
   std:
-    - 0.3708216015661231
-    - 3.9384226707300183
-    - 1.3858425523920141
+    - 0.3724617889369732
+    - 3.8552865875990774
+    - 1.4440375404063837
     - 1.0
-    - 0.008049287887886414
-    - 11.67327852278438
-    - 11.661592248841174
-    - 0.07692254251872102
-    - 0.4705180033738066
-    - 0.4426022839471435
-    - 0.40970709114509807
-    - 0.00017105631814723807
-    - 0.293173319233742
-    - 0.2489595771098316
-    - 45.85245268949974
-    - 0.3942600428102851
+    - 0.008929804388326953
+    - 11.62097632816216
+    - 11.61757420301525
+    - 0.0629776625601665
+    - 0.47071996044206776
+    - 0.44025798024355967
+    - 0.41078259924471905
+    - 0.00021842763105809861
+    - 0.2869664804814784
+    - 0.2416145327837469
+    - 42.855152343016684
+    - 0.3935327498516965
 limits:
   max_a_residual: 1.5
   max_log_scale: 0.05
@@ -81,15 +82,49 @@ train:
   backend: Ridge
   alpha: 1.0
   seed: 42
-  data_revision: "2 clean runs 2026-09-26"
+  data_revision: "3 dumps / 36 runs 2026-09-26"
   b_scale_kept: true
   bags:
-    - features_final_dump
-    - features_final_dump1 (1)
-  cv: GroupKFold(2) over runs
-  rows_total: 155169
-  rows_moving: 68385
-  rows_standstill: 86784
+    - "features_final_dump#0"
+    - "features_final_dump#1"
+    - "features_final_dump#2"
+    - "features_final_dump#3"
+    - "features_final_dump#4"
+    - "features_final_dump#5"
+    - "features_final_dump1 (1)#0"
+    - "features_final_dump1 (1)#1"
+    - "features_final_dump1 (1)#2"
+    - "features_final_dump1 (1)#3"
+    - "features_final_dump1 (1)#4"
+    - "features_final_dump1 (1)#5"
+    - "features_final_dump1 (1)#6"
+    - "features_final_dump1 (1)#7"
+    - "features_final_dump1 (1)#8"
+    - "features_final_dump1 (1)#9"
+    - "features_final_dump2 (1)#0"
+    - "features_final_dump2 (1)#1"
+    - "features_final_dump2 (1)#10"
+    - "features_final_dump2 (1)#11"
+    - "features_final_dump2 (1)#12"
+    - "features_final_dump2 (1)#13"
+    - "features_final_dump2 (1)#14"
+    - "features_final_dump2 (1)#15"
+    - "features_final_dump2 (1)#16"
+    - "features_final_dump2 (1)#17"
+    - "features_final_dump2 (1)#18"
+    - "features_final_dump2 (1)#19"
+    - "features_final_dump2 (1)#2"
+    - "features_final_dump2 (1)#3"
+    - "features_final_dump2 (1)#4"
+    - "features_final_dump2 (1)#5"
+    - "features_final_dump2 (1)#6"
+    - "features_final_dump2 (1)#7"
+    - "features_final_dump2 (1)#8"
+    - "features_final_dump2 (1)#9"
+  cv: GroupKFold(5) over runs
+  rows_total: 423201
+  rows_moving: 208427
+  rows_standstill: 214774
   sample_weight_standstill: 0.1
   sample_weight_moving: 1.0
   b_scale_log_scale_pearson_r: null
@@ -98,7 +133,7 @@ target_report:
   a_residual:
     trained: true
     p1: -1.5
-    p50: 0.058463817
+    p50: 0.058560547
     p99: 1.5
     abs_max: 1.5
     frac_over_limit: 0.0
@@ -111,34 +146,80 @@ validation_metrics:
     -
       fold: 0
       held_out_runs:
-        - features_final_dump
-      rows: 98754
+        - "features_final_dump#0"
+        - "features_final_dump#1"
+        - "features_final_dump1 (1)#1"
+        - "features_final_dump1 (1)#4"
+        - "features_final_dump2 (1)#11"
+        - "features_final_dump2 (1)#13"
+        - "features_final_dump2 (1)#18"
+      rows: 84644
     -
       fold: 1
       held_out_runs:
-        - features_final_dump1 (1)
-      rows: 56415
+        - "features_final_dump#2"
+        - "features_final_dump1 (1)#0"
+        - "features_final_dump1 (1)#2"
+        - "features_final_dump1 (1)#7"
+        - "features_final_dump2 (1)#12"
+        - "features_final_dump2 (1)#16"
+        - "features_final_dump2 (1)#3"
+        - "features_final_dump2 (1)#9"
+      rows: 84782
+    -
+      fold: 2
+      held_out_runs:
+        - "features_final_dump#3"
+        - "features_final_dump1 (1)#3"
+        - "features_final_dump1 (1)#6"
+        - "features_final_dump1 (1)#8"
+        - "features_final_dump2 (1)#17"
+        - "features_final_dump2 (1)#19"
+        - "features_final_dump2 (1)#6"
+      rows: 84643
+    -
+      fold: 3
+      held_out_runs:
+        - "features_final_dump#4"
+        - "features_final_dump1 (1)#9"
+        - "features_final_dump2 (1)#10"
+        - "features_final_dump2 (1)#14"
+        - "features_final_dump2 (1)#15"
+        - "features_final_dump2 (1)#4"
+        - "features_final_dump2 (1)#8"
+      rows: 84618
+    -
+      fold: 4
+      held_out_runs:
+        - "features_final_dump#5"
+        - "features_final_dump1 (1)#5"
+        - "features_final_dump2 (1)#0"
+        - "features_final_dump2 (1)#1"
+        - "features_final_dump2 (1)#2"
+        - "features_final_dump2 (1)#5"
+        - "features_final_dump2 (1)#7"
+      rows: 84514
   regimes:
     all:
       name: all
-      n: 155169
-      mae: 0.2323706827837731
-      rmse: 0.4249728062558757
-      bias: 0.0010985237649848087
-      baseline_rmse: 0.9214326366983396
+      n: 423201
+      mae: 0.2798961201638363
+      rmse: 0.4474009424865704
+      bias: -0.01547331614883236
+      baseline_rmse: 0.9555147871980012
     standstill (v<=1.8):
       name: "standstill (v<=1.8)"
-      n: 86784
-      mae: 0.11851910373992341
-      rmse: 0.2365694620314157
-      bias: 0.008843031300476136
-      baseline_rmse: 0.7713659736640329
+      n: 214774
+      mae: 0.16949121259714514
+      rmse: 0.26491732851689126
+      bias: -0.03209988224647967
+      baseline_rmse: 0.8222912754277457
     moving (v>1.8):
       name: "moving (v>1.8)"
-      n: 68385
-      mae: 0.3768540553909451
-      rmse: 0.5820414203073645
-      bias: -0.00872964530659638
-      baseline_rmse: 1.076655284510407
+      n: 208427
+      mae: 0.3936630679092269
+      rmse: 0.5780245237923466
+      bias: 0.0016595606236400385
+      baseline_rmse: 1.0656898459645106
   trained_outputs:
     - a_residual

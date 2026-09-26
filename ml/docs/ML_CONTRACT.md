@@ -245,3 +245,51 @@ Next input: 20-30 runs regenerated as `features_v2_*.csv`, with the schema
 version in the filename so a dump can never again be silently skipped. With two
 runs the split still trains on one run per fold, so more runs tighten the
 estimate rather than unblock the work.
+
+## Dump grouping: a file is not a run
+
+`features_final_dump*` concatenate several drives per file. Measured by resets
+in `t`: 6 runs in the first, 10 in the second, 20 in the third, 36 in total.
+
+The loader used to take the filename as the run identifier, on the assumption
+that one file is one run. That gave 3 CV groups, so a fold held out all 20 runs
+of the third file at once and windows of the same drive sat on both sides of the
+other folds. Grouping is now `filename#<run index>`, where the run index counts
+resets in `t`, giving 36 groups and 5-fold GroupKFold with no leakage between
+drives.
+
+C++ should still emit one file per run and put the schema version in the name, so
+this recovery never has to guess.
+
+## Metrics on 3 dumps / 36 runs
+
+423 201 rows, 5-fold GroupKFold grouped by run:
+
+| regime | n | MAE | RMSE | bias | baseline RMSE |
+|---|---|---|---|---|---|
+| all | 423 201 | 0.280 | 0.447 | -0.016 | 0.956 |
+| standstill (v <= 1.8 km/h) | 214 774 | 0.170 | 0.265 | -0.032 | 0.822 |
+| moving (v > 1.8 km/h) | 208 427 | 0.394 | 0.578 | +0.002 | 1.066 |
+
+Moving RMSE is 0.578 against 0.582 from the 2-run set. Seventeen extra runs and
+268 000 extra rows bought nothing, so data volume is not the binding constraint.
+Bias in the moving regime is +0.002 m/s^2, i.e. no systematic error left.
+
+## What now limits the model: target saturation, not sample count
+
+`target_a_residual` arrives pre-clipped in the dump, so the +/-1.50 training clip
+is now a no-op. The share of rows sitting exactly at the clip grows across the
+three files:
+
+| file | rows | at |y| = 1.50 | jerk p99 |
+|---|---|---|---|
+| features_final_dump.csv | 56 415 | 21.7% | 7.1 m/s^3 |
+| features_final_dump1 (1).csv | 98 754 | 26.2% | 37.6 m/s^3 |
+| features_final_dump2 (1).csv | 268 032 | 29.6% | 37.5 m/s^3 |
+
+Roughly 30% of the newest file is a saturation indicator rather than a
+correction, and its jerk p99 is five times the first file. That is consistent
+with moving RMSE refusing to move as clean data was added. The next request to
+C++ is a dump with the reference unclipped, or at least a per-row flag saying
+whether the target hit the limit, so saturated rows can be excluded or
+down-weighted instead of being learned as if they were real.
