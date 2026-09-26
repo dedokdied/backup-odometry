@@ -1,10 +1,10 @@
 schema_version: 1
 model_id: speed_residual_v1
-created_utc: "2026-09-26T23:33:51Z"
+created_utc: "2026-09-26T23:39:08Z"
 author: ML side
 backend: linear
 provenance:
-  data_revision: "python v2, 97 content-hash groups, 1 bag excluded"
+  data_revision: "python v2, 96 content-hash groups"
   sources:
     - features_v2_30618_01f73500.csv
     - features_v2_30618_0259fe53.csv
@@ -200,7 +200,7 @@ train:
   backend: Ridge
   alpha: 1.0
   seed: 42
-  data_revision: "python v2, 97 content-hash groups, 1 bag excluded"
+  data_revision: "python v2, 96 content-hash groups"
   b_scale_kept: true
   bags:
     - 02d9cd305b145dc7

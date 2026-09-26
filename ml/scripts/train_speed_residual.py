@@ -703,10 +703,22 @@ def main() -> None:
         f"\n{len(list(folds))}-fold GroupKFold over {len(set(groups.tolist()))} runs "
         f"(alpha={args.alpha}, seed={args.seed})"
     )
+    # Count the regimes from the speed, not from the weight value. With
+    # --clipped-weight equal to STANDSTILL_WEIGHT a saturated moving row lands on
+    # exactly the same weight as a standstill row, so a weight comparison put
+    # 1.6M moving rows into the standstill count and the two splits disagreed.
+    v_all = X[:, vi]
+    n_moving = int((v_all > STOP_SPEED_KPH).sum())
+    n_standstill = int((v_all <= STOP_SPEED_KPH).sum())
+    if args.clipped_rows == "downweight" and abs(args.clipped_weight - STANDSTILL_WEIGHT) < 1e-12:
+        print(
+            f"  note: --clipped-weight equals STANDSTILL_WEIGHT, so regime membership is "
+            f"reported from speed below, not from weight"
+        )
     print(
         f"  weights: moving {MOVING_WEIGHT}, standstill {STANDSTILL_WEIGHT} "
-        f"(v <= {STOP_SPEED_KPH} km/h); moving rows {int((weights > STANDSTILL_WEIGHT).sum())}, "
-        f"standstill {int((weights < 1.0).sum())}"
+        f"(v <= {STOP_SPEED_KPH} km/h); moving rows {n_moving}, "
+        f"standstill {n_standstill}"
     )
 
     oof = np.full((X.shape[0], N_OUTPUTS), np.nan)
@@ -730,7 +742,6 @@ def main() -> None:
         print(f"  fold {k}: held out {fold_runs[k]}, {len(te)} rows")
 
     ok = np.isfinite(oof[:, 0])
-    v_all = X[:, vi]
     regimes = {
         "all": ok,
         "standstill (v<=1.8)": ok & (v_all <= STOP_SPEED_KPH),
