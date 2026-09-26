@@ -1,0 +1,147 @@
+schema_version: 1
+model_id: speed_residual_v1
+created_utc: "2026-09-26T18:36:44Z"
+author: ML side
+backend: linear
+weights_file: speed_residual.bin
+weights_layout: "[W (3x16) row-major][b (3)], little-endian float64, 51 values"
+apply: "z = clip((x - mean) / std, -z_clip, z_clip); y = W @ z + b"
+z_clip: 8.0
+features:
+  - u
+  - v
+  - a_model
+  - grade
+  - mu
+  - omega_front
+  - omega_rear
+  - b_scale
+  - slip_index
+  - trust
+  - cmd_rate
+  - dt
+  - abs_u
+  - u_sq
+  - v_sq
+  - force_ratio
+outputs:
+  - target_a_residual
+  - target_log_scale
+  - target_mu
+norm:
+  mean:
+    - 0.026630188737001688
+    - 1.6176993878427777
+    - -0.07590143860826125
+    - 0.0
+    - 0.2680700808780695
+    - 5.450021837627846
+    - 5.524195636659757
+    - 1.0
+    - 0.37044812181742715
+    - 0.6258003209847399
+    - -0.000201823866338602
+    - 0.022586785747390398
+    - 0.12659292277597178
+    - 0.07127921409727607
+    - 10.345553975360524
+    - 0.23352262159707723
+  std:
+    - 0.265650234648532
+    - 2.780036450469064
+    - 1.0697313908721426
+    - 1.0
+    - 0.020953071965032453
+    - 9.921664361771615
+    - 9.996721401481517
+    - 1.0
+    - 0.46369351314302665
+    - 0.4445223855321032
+    - 0.2883152852511344
+    - 0.007187873101762007
+    - 0.23506051566357392
+    - 0.1829646681011813
+    - 26.939968087012403
+    - 0.3513217070155497
+limits:
+  max_a_residual: 1.5
+  max_log_scale: 0.05
+  mu_min: 0.05
+  mu_max: 0.9
+train:
+  backend: Ridge
+  alpha: 1.0
+  seed: 42
+  data_revision: "features_dump 4 runs 2026-09-26"
+  b_scale_kept: true
+  bags:
+    - features_082f1d65
+    - features_1551d0a9
+    - features_7bfbb5ed
+    - features_bcc9e7a2
+  cv: GroupKFold(4) over runs
+  rows_total: 20118
+  rows_moving: 5973
+  rows_standstill: 14145
+  sample_weight_standstill: 0.1
+  sample_weight_moving: 1.0
+  b_scale_log_scale_pearson_r: null
+  notes: Trained on the C++ feature dump only. a_model is pure physics; slip_index is the C++ detector and is not blended with any Python model. grade is 0.0 throughout because the map is disabled.
+target_report:
+  target_a_residual:
+    trained: true
+    p1: -3.48435663073
+    p50: 0.058463817
+    p99: 4.151179904
+    abs_max: 4.172407947
+    frac_over_limit: 0.21806342578785168
+  target_log_scale:
+    trained: false
+  target_mu:
+    trained: false
+validation_metrics:
+  folds:
+    -
+      fold: 0
+      held_out_runs:
+        - features_082f1d65
+      rows: 11150
+    -
+      fold: 1
+      held_out_runs:
+        - features_1551d0a9
+      rows: 5981
+    -
+      fold: 2
+      held_out_runs:
+        - features_7bfbb5ed
+      rows: 1826
+    -
+      fold: 3
+      held_out_runs:
+        - features_bcc9e7a2
+      rows: 1161
+  regimes:
+    all:
+      name: all
+      n: 20118
+      mae: 2.012885340377434
+      rmse: 5.785719482718567
+      bias: 1.7363581314871674
+      baseline_rmse: 0.7994270825068125
+    standstill (v<=1.8):
+      name: "standstill (v<=1.8)"
+      n: 14145
+      mae: 0.18387651237777564
+      rmse: 0.3325811306792507
+      bias: -0.02020870194496252
+      baseline_rmse: 0.561628671851321
+    moving (v>1.8):
+      name: "moving (v>1.8)"
+      n: 5973
+      mae: 6.344264860225947
+      rmse: 10.605922284348049
+      bias: 5.896183656164463
+      baseline_rmse: 1.1785616018878835
+  trained_outputs:
+    - target_a_residual

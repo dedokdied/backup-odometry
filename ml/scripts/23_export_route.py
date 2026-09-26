@@ -33,17 +33,30 @@ UTM_ZONE = 37
 
 
 def route_document(mp: MapProjection) -> dict:
-    """The route in UTM, with the tangent and the left normal at every vertex."""
+    """The route in UTM, with heading, grade and curvature at every vertex.
+
+    ``grade`` is the literal dz/ds the interface asks for, which is dimensionless
+    rise-over-run and not an angle; ``grade_rad`` carries the same thing as an
+    angle for a runtime that wants radians.  ``curvature`` is dtheta/ds in 1/m
+    and is exactly zero on a straight section, so a radius derived from it is
+    infinite there rather than undefined.
+    """
     e, n = mp.map_to_utm(mp.graph.xy)
     s = mp.graph.s
+    z = mp.graph.z
     tan = mp.tangent_at(s)  # unit heading in UTM
-    # left normal, so a positive cross-track offset means left of travel
-    nrm = np.column_stack([-tan[:, 1], tan[:, 0]])
+    nrm = np.column_stack([-tan[:, 1], tan[:, 0]])  # left normal
+
+    heading = np.unwrap(np.arctan2(tan[:, 1], tan[:, 0]))
+    dz_ds = np.gradient(z, s)
+    grade_rad = np.arctan(dz_ds)
+    curv = np.gradient(heading, s)
     reg = mp.reg
     return {
-        "format": "odom_ml.route_utm/1",
+        "format": "odom_ml.route_utm/2",
         "conventions": {
-            "units": "metres",
+            "units": "metres; heading in degrees and radians; grade is rise-over-run; "
+                     "curvature in 1/m",
             "frame": f"UTM zone {UTM_ZONE}N, WGS84",
             "false_northing": (
                 "DISABLED. Northings are around 6 188 000, not 16 188 000. Adding the "
@@ -56,7 +69,12 @@ def route_document(mp: MapProjection) -> dict:
                 "convergence here is about 1.3 deg, which is roughly 100 m of x error over "
                 "5 km if the axes are confused with a tangent-plane ENU frame."
             ),
-            "tangent": "unit vector of increasing arclength, in UTM",
+            "heading": "direction of increasing arclength, measured from east (+x) "
+                       "counter-clockwise, unwrapped continuously along the route",
+            "grade": "dz/ds, dimensionless. grade_rad = atan(grade) if an angle is wanted. "
+                     "Positive means climbing.",
+            "curvature": "d(heading)/ds in 1/m; exactly 0 on a straight section, where a "
+                         "turn radius would be infinite",
             "normal": "left normal, so a positive cross-track offset is left of travel",
             "origin": (
                 "The output frame is this polyline's UTM minus the UTM of the first GNSS fix "
@@ -68,6 +86,12 @@ def route_document(mp: MapProjection) -> dict:
             "n_points": int(s.size),
             "length_m": float(s[-1]),
             "endpoint_gap_m": float(np.linalg.norm(mp.graph.xy[-1] - mp.graph.xy[0])),
+            "elevation_min_m": float(z.min()),
+            "elevation_max_m": float(z.max()),
+            "grade_abs_max": float(np.abs(dz_ds).max()),
+            "curvature_min_per_m": float(curv.min()),
+            "curvature_max_per_m": float(curv.max()),
+            "min_turn_radius_m": float(1.0 / np.abs(curv).max()),
             "self_overlap": (
                 "None: the two legs are on separate tracks, so a nearest-point arclength is "
                 "unambiguous and no search window is needed."
@@ -87,10 +111,18 @@ def route_document(mp: MapProjection) -> dict:
             "fitted_on": "GNSS tracks from the cached runs; see 12_build_registration.py",
             "artifact": str(registration_path()),
         },
-        "columns": ["e", "n", "s", "t_e", "t_n", "n_e", "n_n", "z_pathgraph_m"],
+        "columns": [
+            "x", "y", "z", "s",
+            "heading_deg", "heading_rad", "grade", "grade_rad", "curvature",
+            "t_x", "t_y", "n_x", "n_y",
+        ],
         "points": [
-            [float(e[i]), float(n[i]), float(s[i]), float(tan[i, 0]), float(tan[i, 1]),
-             float(nrm[i, 0]), float(nrm[i, 1]), float(mp.graph.z[i])]
+            [
+                float(e[i]), float(n[i]), float(z[i]), float(s[i]),
+                float(np.degrees(heading[i])), float(heading[i]),
+                float(dz_ds[i]), float(grade_rad[i]), float(curv[i]),
+                float(tan[i, 0]), float(tan[i, 1]), float(nrm[i, 0]), float(nrm[i, 1]),
+            ]
             for i in range(s.size)
         ],
     }

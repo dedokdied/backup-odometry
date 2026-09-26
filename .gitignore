@@ -32,3 +32,9 @@ artifacts/models/traction_v1/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Synthetic feature dumps produced by the export self-check; never committed.
+test_dump/
+test_out/
+models_moving/
+
