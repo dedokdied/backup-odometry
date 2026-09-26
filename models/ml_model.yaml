@@ -1,8 +1,18 @@
 schema_version: 1
 model_id: speed_residual_v1
-created_utc: "2026-09-26T19:55:26Z"
+created_utc: "2026-09-26T20:03:39Z"
 author: ML side
 backend: linear
+provenance:
+  data_revision: "2 clean runs 2026-09-26"
+  sources:
+    - features_final_dump.csv
+    - features_final_dump1 (1).csv
+  n_rows_raw: 155169
+  n_rows_used: 155169
+  n_runs: 2
+  cv: GroupKFold(2) over 2 runs
+  filter_wheels: true
 weights_file: speed_residual.bin
 weights_layout: "[W (3x16) row-major][b (3)], little-endian float64, 51 values"
 apply: "y = W @ ((x - mean) / std) + b"
@@ -29,39 +39,39 @@ outputs:
   - mu
 norm:
   mean:
-    - 0.042653502591718614
-    - 2.6626496124646755
-    - -0.1553832863054107
+    - 0.048976589077676595
+    - 2.955881023650574
+    - -0.18011537622779036
     - 0.0
-    - 0.26433976492927236
-    - 7.225974877324422
-    - 7.208078013312989
-    - 1.0366965157750907
-    - 0.4303914653365345
-    - 0.5675993660260934
-    - 0.0012292014315262694
-    - 0.024365697978819597
-    - 0.2049780415664354
-    - 0.12298442814651196
-    - 21.921727605170034
-    - 0.3392668749839416
+    - 0.26301528128133206
+    - 8.053951832401685
+    - 8.039698760859308
+    - 1.0377546921432694
+    - 0.459757865659133
+    - 0.5388358724227261
+    - 0.0009710840888837333
+    - 0.02500055190228074
+    - 0.23228596891594328
+    - 0.13990736645092772
+    - 24.24840575929827
+    - 0.3811203296358228
   std:
-    - 0.3480877861662778
-    - 3.851236768418011
-    - 1.3043762720211032
+    - 0.3708216015661231
+    - 3.9384226707300183
+    - 1.3858425523920141
     - 1.0
-    - 0.012990083643774717
-    - 11.350694212188845
-    - 11.324339497287113
-    - 0.0777281232014343
-    - 0.4698789645298091
-    - 0.44488558004671885
-    - 0.3756534220292896
-    - 0.003838164254163699
-    - 0.28454952229281766
-    - 0.23815698368316204
-    - 44.60621493182523
-    - 0.3880610255091889
+    - 0.008049287887886414
+    - 11.67327852278438
+    - 11.661592248841174
+    - 0.07692254251872102
+    - 0.4705180033738066
+    - 0.4426022839471435
+    - 0.40970709114509807
+    - 0.00017105631814723807
+    - 0.293173319233742
+    - 0.2489595771098316
+    - 45.85245268949974
+    - 0.3942600428102851
 limits:
   max_a_residual: 1.5
   max_log_scale: 0.05
@@ -71,18 +81,15 @@ train:
   backend: Ridge
   alpha: 1.0
   seed: 42
-  data_revision: "5 dumps incl features_final_dump 2026-09-26"
+  data_revision: "2 clean runs 2026-09-26"
   b_scale_kept: true
   bags:
-    - features_082f1d65
-    - features_1551d0a9
-    - features_7bfbb5ed
-    - features_bcc9e7a2
     - features_final_dump
-  cv: GroupKFold(5) over runs
-  rows_total: 76533
-  rows_moving: 30568
-  rows_standstill: 45965
+    - features_final_dump1 (1)
+  cv: GroupKFold(2) over runs
+  rows_total: 155169
+  rows_moving: 68385
+  rows_standstill: 86784
   sample_weight_standstill: 0.1
   sample_weight_moving: 1.0
   b_scale_log_scale_pearson_r: null
@@ -90,11 +97,11 @@ train:
 target_report:
   a_residual:
     trained: true
-    p1: -2.52079268604
+    p1: -1.5
     p50: 0.058463817
-    p99: 3.1940249692799507
-    abs_max: 4.172407947
-    frac_over_limit: 0.05732167823030588
+    p99: 1.5
+    abs_max: 1.5
+    frac_over_limit: 0.0
   log_scale:
     trained: false
   mu:
@@ -104,49 +111,34 @@ validation_metrics:
     -
       fold: 0
       held_out_runs:
-        - features_082f1d65
-      rows: 56415
+        - features_final_dump
+      rows: 98754
     -
       fold: 1
       held_out_runs:
-        - features_1551d0a9
-      rows: 11150
-    -
-      fold: 2
-      held_out_runs:
-        - features_bcc9e7a2
-      rows: 5981
-    -
-      fold: 3
-      held_out_runs:
-        - features_7bfbb5ed
-      rows: 1826
-    -
-      fold: 4
-      held_out_runs:
-        - features_final_dump
-      rows: 1161
+        - features_final_dump1 (1)
+      rows: 56415
   regimes:
     all:
       name: all
-      n: 76533
-      mae: 0.3417855145289412
-      rmse: 0.5152278374044346
-      bias: -0.01005330816087724
-      baseline_rmse: 0.8680960954906649
+      n: 155169
+      mae: 0.2323706827837731
+      rmse: 0.4249728062558757
+      bias: 0.0010985237649848087
+      baseline_rmse: 0.9214326366983396
     standstill (v<=1.8):
       name: "standstill (v<=1.8)"
-      n: 45965
-      mae: 0.19246302467139942
-      rmse: 0.34735706950357814
-      bias: 0.004869170876275241
-      baseline_rmse: 0.7003482108365421
+      n: 86784
+      mae: 0.11851910373992341
+      rmse: 0.2365694620314157
+      bias: 0.008843031300476136
+      baseline_rmse: 0.7713659736640329
     moving (v>1.8):
       name: "moving (v>1.8)"
-      n: 30568
-      mae: 0.5663212462190063
-      rmse: 0.6951253121050378
-      bias: -0.0324921902906441
-      baseline_rmse: 1.0667406276849938
+      n: 68385
+      mae: 0.3768540553909451
+      rmse: 0.5820414203073645
+      bias: -0.00872964530659638
+      baseline_rmse: 1.076655284510407
   trained_outputs:
     - a_residual

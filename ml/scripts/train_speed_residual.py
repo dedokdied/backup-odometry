@@ -644,12 +644,28 @@ def main() -> None:
     if not np.isfinite(check).all():
         raise SystemExit("exported model produces non-finite output")
 
+    n_runs = int(len(set(groups.tolist())))
+    cv_desc = (
+        f"GroupKFold({len(per_fold)}) over {n_runs} runs"
+        if n_runs > 1
+        else f"leave-one-time-block-out({len(per_fold)}) within 1 run"
+    )
+
     doc = {
         "schema_version": 1,
         "model_id": args.model_id,
         "created_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "author": args.author,
         "backend": "linear",
+        "provenance": {
+            "data_revision": args.data_revision,
+            "sources": [p.name for p in paths],
+            "n_rows_raw": int(X.shape[0]),
+            "n_rows_used": int(X.shape[0]),
+            "n_runs": n_runs,
+            "cv": cv_desc,
+            "filter_wheels": bool(args.filter_wheels),
+        },
         "weights_file": bin_path.name,
         "weights_layout": "[W (3x16) row-major][b (3)], little-endian float64, 51 values",
         "apply": "y = W @ ((x - mean) / std) + b",

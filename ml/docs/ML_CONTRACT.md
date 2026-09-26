@@ -142,54 +142,45 @@ the dataset. `x` and `y` are relative. The mix is unusual and worth confirming
 with the jury, but both readings are implemented and documented.
 
 
-## Training status: target confirmed fixed, pending clean multi-run data
+## Training data: features_final_dump* only
 
-The root cause of the earlier 10.6 m/s^2 moving RMSE was **not** the model and
-**not** the sample count. It was the target.
+The four `features_<bagid>.csv` dumps are **withdrawn from training**. They are
+archived under `data/archive/` and must not be fed back in:
 
-eatures_*.csv (4 dumps) compute the reference acceleration from differentiated
-wheel speed, then hard-clip it. Measured on cc9e7a2:
+- they derive the reference acceleration by differentiating wheel speed and then
+  hard-clip it, giving target std 1.41 m/s^2, implied jerk p99 56-62 m/s^3, and
+  21.8% of rows outside the +/-1.50 limit
+- mixing them with the repaired dumps degrades moving RMSE from 0.378 to 0.695,
+  because the broken targets leak into the training targets
+- C++ confirmed `features_final_dump*` is a **replacement**, not an addition
 
-- target std 1.41 m/s^2, range -3.74..+4.14
-- implied jerk p99 56-62 m/s^3, max 104 m/s^3
-- 21.8% of rows outside the +/-1.50 limit
-- the reference itself pinned at exactly +/-1.6 m/s^2
+`features_final_dump*` is the repaired pipeline: jerk p99 7.1 m/s^3, 0.00% of
+rows outside the limit, reference clamp widened to +/-2.0.
 
-eatures_final_dump.csv is the fixed pipeline. Same 16 features, same contract:
+One caveat on schema: `features_final_dump*` has no `a_wheel_clipped` column.
+Absent column is read as "no clipping applied", so filtering is `wheels_valid == 1`
+only. If that column is merely renamed, the filter needs revisiting.
 
-| | 4 old dumps | final_dump |
-|---|---|---|
-| jerk p99 | 56.7 / 62.5 | **7.1 m/s^3** |
-| rows outside +/-1.50 | 21.8% | **0.00%** |
-| reference clamp | +/-1.6 | +/-2.0 |
+## Held-out metrics
 
-### Held-out metrics
-
-5 files, 5-fold GroupKFold grouped by run (cross-run, but 4/5 of the training
-data is the old broken target):
+2 clean runs, GroupKFold over runs (each run held out entirely):
 
 | regime | n | MAE | RMSE | bias | baseline RMSE |
 |---|---|---|---|---|---|
-| all | 76 533 | 0.342 | 0.515 | -0.010 | 0.868 |
-| standstill | 45 965 | 0.193 | 0.347 | +0.005 | 0.700 |
-| moving | 30 568 | 0.566 | 0.695 | -0.033 | 1.067 |
+| all | 155 169 | 0.232 | 0.425 | +0.001 | 0.921 |
+| standstill (v <= 1.8 km/h) | 86 784 | 0.119 | 0.237 | +0.009 | 0.771 |
+| moving (v > 1.8 km/h) | 68 385 | 0.377 | 0.582 | -0.009 | 1.077 |
 
-eatures_final_dump.csv alone, 5-fold leave-one-time-block-out (single run, so
-this is weaker evidence than a cross-run split, but the data is clean):
+Moving RMSE 0.582 against a constant baseline of 1.077, bias -0.009 m/s^2, so
+there is no systematic error left.
 
-| regime | n | MAE | RMSE | bias | baseline RMSE |
-|---|---|---|---|---|---|
-| all | 56 415 | 0.151 | 0.287 | +0.006 | 0.891 |
-| standstill | 31 820 | 0.095 | 0.188 | +0.013 | 0.753 |
-| moving | 24 595 | 0.224 | 0.378 | -0.002 | 1.038 |
+An earlier single-run figure of 0.378 came from leave-one-time-block-out inside
+one run. It was optimistic, because adjacent 50 Hz samples overlap by
+construction. 0.582 is the honest number.
 
-Moving RMSE 10.598 -> 0.378. Bias is within 0.002 m/s^2, so there is no
-systematic error left. eatures_final_dump.csv is a **replacement**, not an
-addition: mixing it with the four old dumps degrades moving RMSE from 0.378 to
-0.695, because the broken targets contaminate training.
+With only 2 runs the split still carries residual optimism: one fold trains on
+one run. 20-30 runs is the next request to C++, and it is a refinement, not a
+blocker.
 
-Next step is 20-30 runs regenerated in the fixed format, so the split can be
-cross-run again. Nothing else is blocking.
-
-	arget_log_scale and 	arget_mu are NaN in every dump, so those two output
+`target_log_scale` and `target_mu` are NaN in every dump, so those two output
 rows are exported as zeros. They are not trained.
