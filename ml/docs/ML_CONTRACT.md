@@ -184,3 +184,64 @@ blocker.
 
 `target_log_scale` and `target_mu` are NaN in every dump, so those two output
 rows are exported as zeros. They are not trained.
+
+## Operating regime: GNSS is not guaranteed mid-route
+
+Ground truth from the jury: tram 30618 is guaranteed, the run starts from a
+standstill with a GNSS fix present, but GNSS in the middle of the route is
+allowed and not guaranteed. The estimator must therefore stay correct while
+blind, and come back without a jump when the fix returns.
+
+### The corrector is safe blind
+
+This is the load-bearing property, and it is structural rather than lucky. From
+`ml_features.hpp`:
+
+- `kFGrade` is documented as "path inclination from the **map**, rad", and
+  `params.yaml` sets `grade_source: "map"`, so it does not come from GNSS
+- `kFTrust` is "odometry trust from the **slip detector**", which is
+  wheel/IMU-derived
+
+Every one of the 16 inputs is therefore wheel, IMU or map derived. **None of
+them read GNSS.** A GNSS dropout changes none of the corrector's inputs, so the
+corrector cannot inject a position error: it outputs an acceleration correction,
+and position is produced separately by the EKF from GNSS, dead reckoning and the
+path map.
+
+This is a reason to keep `grade` sourced from the map rather than from a GNSS
+derivative. Switching `grade_source` to a GNSS-derived grade would quietly break
+blind running.
+
+### What the corrector does not do
+
+It does not correct position. It corrects acceleration:
+
+```
+a_corrected = a_model + a_residual
+```
+
+Position is `p`, integrated by the EKF. The corrector has no opinion about
+`x`, `y` or `z`, and a wrong `a_residual` shows up as integrated drift over
+time, not as an immediate position jump. That is the safer failure mode for a
+blind segment, but it also means corrector error is not visible in `/result/position`
+within a single sample.
+
+### Open item, owned by C++
+
+Dead-reckoning fallback is implemented in `estimator.cpp` (blind mode, late-fix
+reconciliation, UTM-versus-local frame handling). The check that matters and is
+not yet done: **EKF covariance must actually grow during the blind segment.** A
+filter that keeps publishing a tight covariance while coasting will look
+identical to a healthy one in the logs and will be judged wrong on the
+re-acquisition transient. That test belongs to C++.
+
+## Artefact status
+
+Frozen on the two repaired dumps, 155 169 rows, GroupKFold over runs:
+moving RMSE 0.582 vs baseline 1.077, bias -0.009. Provenance is recorded inside
+`models/ml_model.yaml` under `provenance`.
+
+Next input: 20-30 runs regenerated as `features_v2_*.csv`, with the schema
+version in the filename so a dump can never again be silently skipped. With two
+runs the split still trains on one run per fold, so more runs tighten the
+estimate rather than unblock the work.
