@@ -1,0 +1,208 @@
+# ============================================================================
+#  tram_odometry — конфигурация резервной одометрии трамвая
+#  Все величины в СИ, если не указано иное.
+# ============================================================================
+tram_odometry:
+  # ROS 2 requires every parameter file to carry the node name and then
+  # ros__parameters. Without this wrapper rcl refuses to parse the file
+  # and the node aborts at startup.
+  ros__parameters:
+    node_name: tram_odometry
+    frame_id_map: "map"          # REP-103: x — восток, y — север, z — вверх
+    # Кадр для относительной одометрии, когда GNSS недоступен (bag без GNSS-топиков):
+    # пройденный путь от старта, поперечная ось не наблюдается.
+    frame_id_odom: "odom_local"
+    use_sim_time: true
+
+    # ------------------------------------------------------------------ топики
+    topics:
+      front_bogie: "/vehicle/front_bogie_velocity"
+      rear_bogie: "/vehicle/rear_bogie_velocity"
+      driver_cmd: "/vehicle/driver_position_cmd"
+      gnss_fix: "/sensing/gnss/master/fix"
+      gnss_vel: "/sensing/gnss/master/vel"
+      gnss_fix_aux: "/sensing/gnss/rover/fix"
+      gnss_vel_aux: "/sensing/gnss/rover/vel"
+      out_velocity: "/result/velocity"
+      out_position: "/result/position"
+      out_diagnostics: "/result/diagnostics"
+      out_latency: "/result/latency"
+
+    rates:
+      output_hz: 50.0             # >= 10 обязательно, рекомендуется 20-50
+      watchdog_timeout_s: 0.5     # нет данных дольше => модельный режим
+      diagnostics_hz: 2.0
+
+    # ------------------------------------------- система координат и origin
+    frame:
+      # mgrs_relative : x,y = (UTM easting, northing) минус начальная точка
+      # mgrs_absolute : полные UTM-координаты
+      # enu_local     : локальная касательная плоскость (x — восток, y — север)
+      mode: "mgrs_relative"
+      utm_zone: 0                 # 0 = определить автоматически по широте GNSS
+      datum: "WGS84"
+      # 0 = origin берётся из первого валидного GNSS fix, иначе заданные значения
+      origin_lat: 0.0
+      origin_lon: 0.0
+      origin_alt: 0.0
+      xy_relative: true            # вычитать начало из плоских координат
+      z_relative: true             # вычитать начало из высоты
+      publish_enu_twist: true     # доп. топик с оценкой боковой скорости и рыскания
+
+    # ---------------------------------------------------------------------- GNSS
+    # GNSS гарантирован только в первые секунды и может быть недостоверен:
+    # все параметры консервативны, обновления после инициализации — только gated.
+    gnss:
+      baseline_m: 0.0             # базлайн антенн master-rover, 0 = не известен
+      baseline_heading_deg: 0.0   # направление базлайна в СК кузова
+      use_aux_for_yaw: true       # оценивать рыскание по базлайну
+      max_position_jump_m: 25.0   # скачок позиции больше — GNSS отбрасывается
+      max_speed_mps: 35.0         # невозможная скорость по GNSS
+      min_speed_for_calib_mps: 0.5
+      min_travel_for_calib_m: 30.0 # столько пути нужно для калибровки масштаба
+      innovation_gate_m: 30.0     # порог невязки GNSS против счёта одометрии
+      heading_rate_limit_rad_s: 0.5
+
+    # --------------------------------------------------------- автомобиль/трамвай
+    vehicle:
+      profile: "lion"             # lion | lion_empty | custom  (выбор при старте)
+      mass_kg: 38000.0            # полная масса; для lion_empty берётся из профиля
+      wheel_radius_m: 0.300
+      n_wheels_driven: 4          # все колёса ведущие
+      wheelbase_m: 2.755          # между центрами тележек (Львёнок)
+      front_overhang_m: 0.450     # от носа до центра передней тележки
+      rear_overhang_m: 0.450
+      driveline_efficiency: 0.90
+      gear_ratio: 1.0             # редуктор между мотором и колёсом
+      rot_inertia_kgm2: 22.0      # суммарная инерция вращения, приведённая к колесу
+      g: 9.80665
+
+    # --------------------------------------------------- модель тягового привода
+    traction:
+      # u_controller in [0,1] — доля хода ручки; >0 тяга, 0 — coast, <0 тормоз
+      u_min: -1.0
+      u_max: 1.0
+      # нелинейная характеристика "ручка -> момент": кусочно-линейная таблица
+      # (нормированный момент на единицу хода ручки при низкой скорости)
+      torque_curve_u:    [0.0, 0.05, 0.15, 0.30, 0.50, 0.70, 0.85, 1.0]
+      torque_curve_tau:  [0.0, 0.35, 0.62, 0.80, 0.91, 0.97, 1.00, 1.00]
+      max_tractive_effort_n: 90000.0   # максимальная тяговая сила на колёсах, Н
+      max_brake_effort_n: 120000.0     # максимальная тормозная сила, Н
+      rated_power_w: 300000.0          # для ограничения по постоянной мощности
+      # режим постоянной мощности: tau *= min(1, P_rated / (F_max * v))
+      constant_power_limit: true
+      actuator_tau_s: 0.20             # инерционность привода (запаздывание момента)
+      brake_tau_s: 0.20
+      # компенсация момента на низких скоростях против "залипания" (creep)
+      creep_compensation: true
+
+    # ------------------------------------------- продольная динамика / сопротивления
+    dynamics:
+      c_rr: 0.0060               # коэффициент сопротивления качению (безрельсовый эквивалент)
+      rho_air: 1.225
+      cd_a: 12.0                 # Cd*A, трамвай (с поправкой на рельсы)
+      curve_resistance_coeff: 0.0015   # сопротивление на кривых, 1/R
+      grade_source: "map"        # map | none  (уклон берётся из pathgraph)
+      grade_max: 0.06
+
+    # ------------------------------------------------------ сцепление и скольжение
+    adhesion:
+      # The C++ default (0.10) is deliberately conservative so the generic
+      # Longitudinal.AdhesionLimitsAcceleration test holds for any vehicle. The
+      # deployed tram is measured to pull about 1.16 m/s^2 at 38 t, which needs
+      # roughly 46 kN and therefore mu ~ 0.12-0.15; 0.22 keeps the adhesion
+      # ceiling above the 90 kN tractive effort so full notches are no longer
+      # mistaken for wheelspin. Tests construct AdhesionParams directly and are
+      # unaffected by this value.
+      mu_peak: 0.22              # предельный коэффициент сцепления трамвай/рельс
+      mu_wet_factor: 0.65        # множитель при влажных условиях
+      slip_peak: 0.12            # колебание проскальзывания на пике F
+      slip_hard: 0.45            # beyond this — полное скольжение
+      c_slip: 1.55               # Pacejka C
+      b_slip: 8.0
+      e_slip: 0.97
+      # допустимая разница тележек: 0.25 м/с — тревожный порог
+      bogie_mismatch_warn: 0.25
+      bogie_mismatch_fault: 0.80
+
+    # ------------------------------------------------------------------ фильтры
+    filters:
+      wheel_hampel_window: 7     # медианный Hampel-фильтр, отбрасывает выбросы
+      wheel_hampel_sigma: 3.0
+      wheel_cutoff_hz: 25.0      # ФНЧ 2-го порядка на скорости тележек
+      driver_cutoff_hz: 10.0
+      gnss_cutoff_hz: 1.0
+      velocity_cutoff_hz: 8.0
+      accel_limit_mps2: 1.6      # физический предел ускорения, м/с^2
+      decel_limit_mps2: 2.2
+      freeze_timeout_s: 0.7      # датчик завис (значение не меняется дольше)
+      dropout_tolerance_s: 0.35  # допустимый пропуск перед переходом в модельный режим
+
+    # ---------------------------------------------------------------- наблюдатель
+    observer:
+      type: "eskf"               # ekf | eskf
+      # процессные шумы
+      sigma_v: 0.28
+      sigma_a: 1.10
+      sigma_scale: 0.010         # неопределённость масштаба одометрии
+      sigma_slip: 0.35
+      # измерительные шумы (на дисперсии, не на СКО)
+      r_wheel: 0.045
+      r_wheel_degraded: 4.0      # при полном недоверии к одометрии
+      r_gnss_pos: 0.80
+      r_gnss_vel: 0.25
+      gate_chi2: 5.99            # порог отсечения по NIS (2 dof, 99%)
+      gnss_max_age_s: 0.35       # GNSS старше — игнорировать
+      gnss_min_sats: 6
+      gnss_init_window_s: 2.5    # окно начальной калибровки (GNSS гарантирован тут)
+      gnss_trust_after_init: "gated"   # gated | off — использовать ли GNSS после инициализации
+      scale_adaptive_rate: 0.02  # скорость медленной подстройки масштаба после инициализации
+      slip_adaptive_rate: 0.05
+      trust_min: 0.02            # нижняя граница веса одометрии
+      trust_max: 0.98
+
+    # ------------------------------------------- обученная коррекция (ML, опционально)
+    # Контракт фичей и выходов: include/tram_odometry/ml_features.hpp,
+    # подробности и порядок работы с Python-инженером: docs/04_ml_contract.md.
+    # Модель добавляет ОГРАНИЧЕННУЮ поправку к физике; при ml.enable=false или
+    # отсутствии артефакта решение работает на чистой физике без изменений.
+    ml:
+      enable: true
+      model_dir: ""               # пусто = share/tram_odometry/models из пакета
+      descriptor: "ml_model.yaml"
+      strict: false               # true = требовать валидную модель, иначе падать
+      blend: 1.0                  # 0 = только физика, 1 = полная коррекция
+      # потолки поправок (жёстче значений из дескриптора)
+      max_a_residual: 1.50        # м/с^2; ОБУЧАТЕЛЬСКАЯ ЦЕЛЬ ДОЛЖНА КЛИПАТЬСЯ
+                                   # ТЕМ ЖЕ ЗНАЧЕНИЕМ, иначе модель выдаёт
+                                   # значения, которых рантайм никогда не применит
+      max_log_scale: 0.05         # лог. масштаб одометрии
+      mu_min: 0.05
+      mu_max: 0.90
+      use_mu_output: false        # брать mu из модели (иначе оценка наблюдателя)
+      max_consecutive_failures: 20
+      max_inference_ms: 2.0       # бюджет на вызов; превышение -> degraded
+      drop_when_untrusted: 0.0    # >0: при trust ниже порога модель не применяется
+
+      # Выгрузка фактического вектора признаков в CSV для обучения ML-модели.
+      # Колонки идут в порядке kFeatureNames, значения берутся из того же вызова
+      # buildFeatures, который видит сеть, — train/serve skew исключён.
+      # ВАЖНО: перед сдачей вернуть в false.
+      dump_features: false
+      dump_path: "features_dump.csv"
+
+    # ------------------------------------------------------------- pathgraph / карта
+    path_map:
+      enable: true
+      file: ""                   # путь к карте; пусто = без проекции
+      frame_convention: "utm"    # utm | enu
+      search_radius_m: 25.0
+      max_projection_error_m: 8.0
+      publish_s: true            # публиковать путевую координату s
+
+    # ------------------------------------------------------------------ прочее
+    runtime:
+      realtime_hint: true
+      max_execution_time_warn: 0.010   # 10 мс бюджет на цикл
+      history_len: 200
+      log_level: "info"
