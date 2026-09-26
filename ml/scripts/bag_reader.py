@@ -146,8 +146,20 @@ def read_bag(bag_dir: Path, hz: float = 50.0) -> pd.DataFrame:
     )
 
     gnss = _read_gnss(bag_dir, store)
-    for k, v in gnss.items():
-        df[k] = _reindex(grid, v[0], v[1], default=v[2])
+    for key in (
+        "master_fix_lat", "master_fix_lon", "master_fix_alt", "master_fix_quality",
+        "master_vel_x", "master_vel_y",
+        "rover_fix_lat", "rover_fix_lon", "rover_fix_alt", "rover_fix_quality",
+        "rover_vel_x", "rover_vel_y",
+    ):
+        # 35 of the 122 bags carry no GNSS topic at all, so the family may be
+        # absent entirely. Emit the column as NaN anyway: a downstream KeyError
+        # is a crash, and "this run has no reference" is a value.
+        if key in gnss:
+            ts, val, default = gnss[key]
+            df[key] = _reindex(grid, ts, val, default=default)
+        else:
+            df[key] = np.full(grid.shape, np.nan)
 
     df.insert(0, "bag_id", bag_dir.name)
     return df

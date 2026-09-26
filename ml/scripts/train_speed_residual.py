@@ -116,7 +116,27 @@ def find_group_column(columns) -> str | None:
     return None
 
 
-def load_dumps(paths: list[Path], group_col: str | None) -> dict:
+HASH_KEYS = ("u", "a_model", "mu", "b_scale", "target_a_residual")
+
+
+def content_group_id(df) -> str:
+    """Group by content, not by file name.
+
+    The vendored dataset contains 122 bag files but only ~72 distinct runs: 50
+    files are byte-identical re-dumps under different names. Grouping by bag_id
+    put one copy in train and its twin in the held-out fold, so the held-out
+    rows were seen verbatim during training.
+    """
+    import hashlib
+
+    import pandas as pd
+
+    keys = [k for k in HASH_KEYS if k in df.columns]
+    blob = df[keys].to_csv(index=False).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def load_dumps(paths: list[Path], group_col: str | None, group_by_hash: bool = False) -> dict:
     """Read the dumps and decide which targets are actually trainable.
 
     Two realities of the current dump are handled explicitly rather than guessed at:
@@ -136,17 +156,20 @@ def load_dumps(paths: list[Path], group_col: str | None) -> dict:
                 f"{p.name}: missing {len(missing)} required column(s): {missing[:6]}"
                 f"{' ...' if len(missing) > 6 else ''}"
             )
-        col = group_col or find_group_column(df.columns)
-        if col is not None:
-            df["__group__"] = df[col].astype(str)
-            grouping = f"column {col!r}"
+        if group_by_hash:
+            df["__group__"] = content_group_id(df)
+            grouping = "content hash"
         else:
-            # One dump file is NOT one run. The repaired dumps concatenate
-            # several drives, visible as resets in t (measured: 6, 10 and 20
-            # runs in the three files). Grouping by filename alone would put
-            # neighbouring windows of the same drive on both sides of the
-            # split, so the run index is recovered from the resets.
-            if "t" in df.columns:
+            col = group_col or find_group_column(df.columns)
+            if col is not None:
+                df["__group__"] = df[col].astype(str)
+                grouping = f"column {col!r}"
+            elif "t" in df.columns:
+                # One dump file is NOT one run. The repaired dumps concatenate
+                # several drives, visible as resets in t (measured: 6, 10 and 20
+                # runs in the three files). Grouping by filename alone would put
+                # neighbouring windows of the same drive on both sides of the
+                # split, so the run index is recovered from the resets.
                 t = df["t"].to_numpy(dtype=np.float64)
                 run_idx = np.cumsum(np.concatenate(([0], np.diff(t) < 0)))
                 df["__group__"] = [f"{p.stem}#{int(r)}" for r in run_idx]
@@ -454,6 +477,23 @@ def main() -> None:
         help="drop rows below this body speed, km/h (feature 'v')",
     )
     ap.add_argument(
+        "--group-by-hash",
+        action="store_true",
+        help="group by a hash of the feature/target content instead of bag_id, "
+        "so byte-identical re-dumps of one run share a fold",
+    )
+    ap.add_argument(
+        "--exclude-bag-pattern",
+        default=None,
+        help="skip dump files whose name matches this substring",
+    )
+    ap.add_argument(
+        "--max-clip-fraction",
+        type=float,
+        default=None,
+        help="skip dump files whose share of target_clipped rows exceeds this",
+    )
+    ap.add_argument(
         "--clipped-rows",
         choices=("keep", "drop", "downweight"),
         default="keep",
@@ -481,7 +521,31 @@ def main() -> None:
     for p in paths:
         print(f"  {p.name}")
 
-    data = load_dumps(paths, args.group_col)
+    # A run whose targets are mostly saturated is an indicator, not a
+    # correction, and down-weighting rows inside it still leaves a large block
+    # of noise. Drop the whole run instead.
+    if args.max_clip_fraction is not None or args.exclude_bag_pattern:
+        kept = []
+        for p in paths:
+            if args.exclude_bag_pattern and args.exclude_bag_pattern in p.name:
+                print(f"  excluded by pattern: {p.name}")
+                continue
+            if args.max_clip_fraction is not None:
+                import pandas as _pd
+
+                if "target_clipped" in _pd.read_csv(p, nrows=0).columns:
+                    frac = float(_pd.read_csv(p, usecols=["target_clipped"]).iloc[:, 0].mean())
+                    if frac > args.max_clip_fraction:
+                        print(
+                            f"  excluded {p.name}: {100*frac:.1f}% of targets clipped "
+                            f"(> {100*args.max_clip_fraction:.0f}%)"
+                        )
+                        continue
+            kept.append(p)
+        print(f"dump files after exclusion: {len(kept)}")
+        paths = kept
+
+    data = load_dumps(paths, args.group_col, group_by_hash=args.group_by_hash)
     X, Yraw, groups = data["X"], data["Y"], data["group"]
     available = data["available"]
     print(f"\nrows {X.shape[0]}, runs {len(set(groups.tolist()))}, features {X.shape[1]}")

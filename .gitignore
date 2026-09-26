@@ -46,3 +46,6 @@ models_probe/
 
 data/features/
 
+train.log
+clip_stats.csv
+
