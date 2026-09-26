@@ -38,3 +38,7 @@ test_dump/
 test_out/
 models_moving/
 
+
+# single-run experiment output, not the shipped artefact
+models_final_only/
+

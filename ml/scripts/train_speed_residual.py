@@ -212,7 +212,19 @@ def group_folds(groups: np.ndarray, n_splits: int = 4, seed: int = SEED):
     uniq = sorted(set(groups.tolist()))
     n = len(uniq)
     if n < 2:
-        raise DumpError(f"only {n} run(s) in the dump; need at least 2 to split")
+        # A single run cannot be split by group.  Fall back to contiguous
+        # positional blocks, which for a time-ordered dump are time blocks, so
+        # held-out rows still follow rows that were trained on.  Shuffling here
+        # would leak: neighbouring samples overlap by construction.
+        k = max(2, n_splits)
+        bounds = np.linspace(0, groups.shape[0], k + 1).astype(int)
+        blocks = [np.arange(bounds[i], bounds[i + 1]) for i in range(k)]
+        blocks = [b for b in blocks if b.size]
+        folds = []
+        for i, te in enumerate(blocks):
+            tr = np.concatenate([b for j, b in enumerate(blocks) if j != i])
+            folds.append((tr, te))
+        return folds, [[f"time-block {i}"] for i in range(len(folds))]
     k = max(2, min(n_splits, n))
     rng = np.random.default_rng(seed)
     order = rng.permutation(n)
@@ -439,16 +451,21 @@ def main() -> None:
     if args.filter_wheels:
         import pandas as pd
 
-        # the flag columns are not features, so keep them attached per source file
-        flags = pd.concat(
-            [
-                pd.read_csv(p, usecols=["wheels_valid", "a_wheel_clipped"]).assign(
-                    __src__=p.name
-                )
-                for p in paths
-            ],
-            ignore_index=True,
-        )
+        # The flag columns are not features, so keep them attached per source file.
+        # Newer dumps dropped a_wheel_clipped; read whatever each file actually
+        # has rather than dropping the whole file, which silently cost us a
+        # 56k-row run before.
+        parts = []
+        for p in paths:
+            head = pd.read_csv(p, nrows=0)
+            have = [c for c in ("wheels_valid", "a_wheel_clipped") if c in head.columns]
+            part = pd.read_csv(p, usecols=have).assign(__src__=p.name)
+            if "wheels_valid" not in part.columns:
+                part["wheels_valid"] = 1
+            if "a_wheel_clipped" not in part.columns:
+                part["a_wheel_clipped"] = 0
+            parts.append(part[["wheels_valid", "a_wheel_clipped", "__src__"]])
+        flags = pd.concat(parts, ignore_index=True)
         flags = flags[(flags["wheels_valid"] == 1) & (flags["a_wheel_clipped"] == 0)]
         import numpy as _np
 

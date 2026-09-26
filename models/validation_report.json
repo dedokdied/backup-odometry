@@ -6,26 +6,33 @@
         "held_out_runs": [
           "features_082f1d65"
         ],
-        "rows": 11150
+        "rows": 56415
       },
       {
         "fold": 1,
         "held_out_runs": [
           "features_1551d0a9"
         ],
-        "rows": 5981
+        "rows": 11150
       },
       {
         "fold": 2,
+        "held_out_runs": [
+          "features_bcc9e7a2"
+        ],
+        "rows": 5981
+      },
+      {
+        "fold": 3,
         "held_out_runs": [
           "features_7bfbb5ed"
         ],
         "rows": 1826
       },
       {
-        "fold": 3,
+        "fold": 4,
         "held_out_runs": [
-          "features_bcc9e7a2"
+          "features_final_dump"
         ],
         "rows": 1161
       }
@@ -33,27 +40,27 @@
     "regimes": {
       "all": {
         "name": "all",
-        "n": 20118,
-        "mae": 2.0098718647554192,
-        "rmse": 5.781150109834132,
-        "bias": 1.7356976638902692,
-        "baseline_rmse": 0.7994270825068125
+        "n": 76533,
+        "mae": 0.3417855145289412,
+        "rmse": 0.5152278374044346,
+        "bias": -0.01005330816087724,
+        "baseline_rmse": 0.8680960954906649
       },
       "standstill (v<=1.8)": {
         "name": "standstill (v<=1.8)",
-        "n": 14145,
-        "mae": 0.1826067628944978,
-        "rmse": 0.33002566054260785,
-        "bias": -0.019089340582097342,
-        "baseline_rmse": 0.561628671851321
+        "n": 45965,
+        "mae": 0.19246302467139942,
+        "rmse": 0.34735706950357814,
+        "bias": 0.004869170876275241,
+        "baseline_rmse": 0.7003482108365421
       },
       "moving (v>1.8)": {
         "name": "moving (v>1.8)",
-        "n": 5973,
-        "mae": 6.337121967856497,
-        "rmse": 10.597715749269842,
-        "bias": 5.891308274682437,
-        "baseline_rmse": 1.1785616018878835
+        "n": 30568,
+        "mae": 0.5663212462190063,
+        "rmse": 0.6951253121050378,
+        "bias": -0.0324921902906441,
+        "baseline_rmse": 1.0667406276849938
       }
     },
     "trained_outputs": [
@@ -63,11 +70,11 @@
   "targets": {
     "a_residual": {
       "trained": true,
-      "p1": -3.48435663073,
+      "p1": -2.52079268604,
       "p50": 0.058463817,
-      "p99": 4.151179904,
+      "p99": 3.1940249692799507,
       "abs_max": 4.172407947,
-      "frac_over_limit": 0.21806342578785168
+      "frac_over_limit": 0.05732167823030588
     },
     "log_scale": {
       "trained": false

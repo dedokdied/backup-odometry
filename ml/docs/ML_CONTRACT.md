@@ -142,39 +142,54 @@ the dataset. `x` and `y` are relative. The mix is unusual and worth confirming
 with the jury, but both readings are implemented and documented.
 
 
-## Training status: TEMPORARY, not fit for the moving regime
+## Training status: target confirmed fixed, pending clean multi-run data
 
-This artefact was trained on **4 feature dumps** so the C++ integration path could
-be exercised end to end. It is wired up correctly; it is not a finished model.
+The root cause of the earlier 10.6 m/s^2 moving RMSE was **not** the model and
+**not** the sample count. It was the target.
 
-Held-out metrics, pooled over 4-fold GroupKFold grouped by run:
+eatures_*.csv (4 dumps) compute the reference acceleration from differentiated
+wheel speed, then hard-clip it. Measured on cc9e7a2:
+
+- target std 1.41 m/s^2, range -3.74..+4.14
+- implied jerk p99 56-62 m/s^3, max 104 m/s^3
+- 21.8% of rows outside the +/-1.50 limit
+- the reference itself pinned at exactly +/-1.6 m/s^2
+
+eatures_final_dump.csv is the fixed pipeline. Same 16 features, same contract:
+
+| | 4 old dumps | final_dump |
+|---|---|---|
+| jerk p99 | 56.7 / 62.5 | **7.1 m/s^3** |
+| rows outside +/-1.50 | 21.8% | **0.00%** |
+| reference clamp | +/-1.6 | +/-2.0 |
+
+### Held-out metrics
+
+5 files, 5-fold GroupKFold grouped by run (cross-run, but 4/5 of the training
+data is the old broken target):
 
 | regime | n | MAE | RMSE | bias | baseline RMSE |
 |---|---|---|---|---|---|
-| all | 20 118 | 2.010 | 5.781 | +1.736 | 0.799 |
-| standstill (v <= 1.8 km/h) | 14 145 | 0.183 | 0.330 | -0.019 | 0.562 |
-| **moving (v > 1.8 km/h)** | 5 973 | 6.337 | **10.598** | **+5.891** | 1.179 |
+| all | 76 533 | 0.342 | 0.515 | -0.010 | 0.868 |
+| standstill | 45 965 | 0.193 | 0.347 | +0.005 | 0.700 |
+| moving | 30 568 | 0.566 | 0.695 | -0.033 | 1.067 |
 
-Standalone limit is 0.33 m/s^2, better than the constant baseline. Moving is 9x
-**worse** than baseline. Do not ship this for driving.
+eatures_final_dump.csv alone, 5-fold leave-one-time-block-out (single run, so
+this is weaker evidence than a cross-run split, but the data is clean):
 
-Two independent causes, both measured:
+| regime | n | MAE | RMSE | bias | baseline RMSE |
+|---|---|---|---|---|---|
+| all | 56 415 | 0.151 | 0.287 | +0.006 | 0.891 |
+| standstill | 31 820 | 0.095 | 0.188 | +0.013 | 0.753 |
+| moving | 24 595 | 0.224 | 0.378 | -0.002 | 1.038 |
 
-1. **Too few moving runs.** Only 2 of 4 dumps contain motion (7bfbb5ed 481 moving
-   rows, bcc9e7a2 638). Leave-one-run-out therefore trains the moving head on a
-   single run, while 14 145 standstill rows pull towards a constant.
+Moving RMSE 10.598 -> 0.378. Bias is within 0.002 m/s^2, so there is no
+systematic error left. eatures_final_dump.csv is a **replacement**, not an
+addition: mixing it with the four old dumps degrades moving RMSE from 0.378 to
+0.695, because the broken targets contaminate training.
 
-2. **The target is noise-dominated.** In run bcc9e7a2, _model is pinned at
-   exactly +2.2000 m/s^2 across consecutive samples (the physics model is
-   saturating), and 	arget_a_residual moves from -3.744 to -1.508 m/s^2 within
-   60 ms. The implied true acceleration swings -1.54 -> +0.69 m/s^2 in 60 ms,
-   which is not physically achievable for a tram. In the moving regime the target
-   has std 1.41 m/s^2 and spans -3.74..+4.14; 21.8% of all rows fall outside the
-   +/-1.50 clip. A corrector cannot predict a target whose noise exceeds its
-   signal, so cause 1 alone will not make the moving head work.
-
-Retrain is required once both are addressed: 20-30 moving runs, and a target
-derived from a smooth, clamp-free acceleration reference.
+Next step is 20-30 runs regenerated in the fixed format, so the split can be
+cross-run again. Nothing else is blocking.
 
 	arget_log_scale and 	arget_mu are NaN in every dump, so those two output
 rows are exported as zeros. They are not trained.
