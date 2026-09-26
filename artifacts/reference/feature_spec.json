@@ -1,0 +1,175 @@
+{
+  "format": "odom_ml.feature_spec/1",
+  "feature_names": [
+    "v_wheel",
+    "v_front",
+    "v_rear",
+    "v_diff",
+    "v_fast",
+    "v_slow",
+    "v_long",
+    "a_wheel",
+    "a_fast",
+    "v_std",
+    "u",
+    "u_abs",
+    "u_tractive",
+    "u_brake",
+    "du",
+    "moving",
+    "vf_valid",
+    "vr_valid",
+    "gap_front",
+    "gap_rear"
+  ],
+  "n_features": 20,
+  "feature_spec": {
+    "names": [
+      "v_wheel",
+      "v_front",
+      "v_rear",
+      "v_diff",
+      "v_fast",
+      "v_slow",
+      "v_long",
+      "a_wheel",
+      "a_fast",
+      "v_std",
+      "u",
+      "u_abs",
+      "u_tractive",
+      "u_brake",
+      "du",
+      "moving",
+      "vf_valid",
+      "vr_valid",
+      "gap_front",
+      "gap_rear"
+    ],
+    "hz": 50.0,
+    "wheel_scale": 1.0,
+    "taus": [
+      0.2,
+      2.0,
+      20.0
+    ],
+    "std_window_s": 2.0,
+    "max_accel_m_s2": 2.0,
+    "max_notional_rate_per_s": 60.0,
+    "causal": true
+  },
+  "implementation_notes": {
+    "IMPORTANT_rolling_std_window": "STD_WIN is 2.0 s = 100 samples, but the window is rounded UP to the next power of two, so the effective window is 128 samples = 2.56 s. A C++ port that uses 100 samples will not reproduce v_std.",
+    "iir_recursion": "y[0] = x[0]; for n >= 1: y[n] = a*y[n-1] + b*x[n], with the a/b in iir_coefficients. The first sample passes through unchanged, it is NOT ramped up from zero.",
+    "iir_coefficients": {
+      "v_fast": {
+        "tau_s": 0.2,
+        "a": 0.9048374180359596,
+        "b": 0.09516258196404037
+      },
+      "v_slow": {
+        "tau_s": 2.0,
+        "a": 0.9900498337491681,
+        "b": 0.009950166250831893
+      },
+      "v_long": {
+        "tau_s": 20.0,
+        "a": 0.999000499833375,
+        "b": 0.000999500166624978
+      },
+      "a_wheel": {
+        "tau_s": 0.4,
+        "a": 0.951229424500714,
+        "b": 0.048770575499285984
+      },
+      "a_fast": {
+        "tau_s": 0.6,
+        "a": 0.9672161004820059,
+        "b": 0.0327838995179941
+      },
+      "du": {
+        "tau_s": 0.2,
+        "a": 0.9048374180359596,
+        "b": 0.09516258196404037
+      }
+    },
+    "causal_slope": "d[n] = (x[n] - x[n-1]) / dt, then d goes through an IIR with the listed tau. No centred difference anywhere.",
+    "causal_slope_first_sample": "EDGE CASE: at n=0 the slope is not yet computable because it needs x[1]. The offline reference sets d[0] = d[1], so sample 0 of a_wheel/a_fast/du equals the first computable slope. A streaming port that cannot look ahead should emit 0 (or hold the previous value) for n=0 and expect a difference limited to that single sample.",
+    "rolling_std": "Trailing window of 128 samples, head zero-padded so the divisor is always 128; population variance, E[x^2]-E[x]^2, not the sample variance. The first samples are therefore biased low. This is intentional and must be reproduced.",
+    "nan_rules": [
+      "The raw topics contain gaps: a missing reading is written as JSON null in the exported inputs and must be read back as NaN. Do not coerce it to 0.",
+      "v_wheel = mean(v_front, v_rear) when both are finite; otherwise the finite one; 0.0 when neither is finite.",
+      "v_diff = v_front - v_rear when both are finite, otherwise 0.0.",
+      "v_front / v_rear columns emit 0.0 where the input was not finite.",
+      "NaN is replaced by 0.0 before any IIR, so no NaN can enter a recursion.",
+      "Consequence: every emitted feature is finite, so the exported feature matrix has no nulls. vf_valid / vr_valid / gap_* carry what was missing.",
+      "The trees carry a missing_go_to_left flag per internal node; with finite features that branch is unreachable, but implement it as a guard."
+    ],
+    "units": {
+      "u": "notional, -15..15, 0 = neutral",
+      "v_front": "m/s",
+      "v_rear": "m/s",
+      "v_wheel": "m/s",
+      "v_diff": "m/s",
+      "v_fast": "m/s",
+      "v_slow": "m/s",
+      "v_long": "m/s",
+      "a_wheel": "m/s^2",
+      "a_fast": "m/s^2",
+      "v_std": "m/s",
+      "u_abs": "notional",
+      "u_tractive": "notional",
+      "u_brake": "notional",
+      "du": "notional per second",
+      "moving": "0 or 1",
+      "vf_valid": "0 or 1",
+      "vr_valid": "0 or 1",
+      "gap_front": "samples",
+      "gap_rear": "samples"
+    },
+    "formulas": {
+      "v_wheel": "mean(v_front, v_rear) if both finite, else whichever is finite, else 0",
+      "v_front": "v_front (0.0 where the input was not finite)",
+      "v_rear": "v_rear (0.0 where the input was not finite)",
+      "v_diff": "v_front - v_rear if both finite, else 0",
+      "v_fast": "IIR(v_wheel, tau=0.2 s)",
+      "v_slow": "IIR(v_wheel, tau=2.0 s)",
+      "v_long": "IIR(v_wheel, tau=20.0 s)",
+      "a_wheel": "clamp(IIR(slope(v_wheel), tau=0.4 s), -2, +2)",
+      "a_fast": "clamp(IIR(slope(v_fast), tau=0.6 s), -2, +2)",
+      "v_std": "population std of v_wheel over a trailing 128-sample window (see window note)",
+      "u": "u, NaN replaced by 0.0",
+      "u_abs": "abs(u)",
+      "u_tractive": "u * (v_wheel > 0.5 ? 1 : 0)",
+      "u_brake": "-min(u, 0) * (v_wheel > 0.5 ? 1 : 0)",
+      "du": "clamp(IIR(slope(u), tau=0.2 s), -60, +60)",
+      "moving": "v_wheel > 0.5 ? 1 : 0",
+      "vf_valid": "isfinite(v_front) ? 1 : 0",
+      "vr_valid": "isfinite(v_rear) ? 1 : 0",
+      "gap_front": "samples since the last valid v_front, 0 if the current one is valid",
+      "gap_rear": "samples since the last valid v_rear, 0 if the current one is valid"
+    },
+    "update_order": [
+      "scale v_front and v_rear by wheel_scale",
+      "compute the validity flags vf_valid / vr_valid from the scaled values",
+      "v_wheel = mean of the valid bogies, else the valid one, else 0",
+      "v_diff = difference of the bogies when both valid, else 0",
+      "update the three IIR states v_fast, v_slow, v_long from v_wheel",
+      "update the slope+IIR chain for a_wheel from v_wheel",
+      "update the slope+IIR chain for a_fast from v_fast",
+      "push v_wheel into the trailing 128-sample window and emit v_std",
+      "u_tractive and u_brake use the moving flag computed from this sample's v_wheel",
+      "update the slope+IIR chain for du from u",
+      "advance the gap_front / gap_rear counters",
+      "clamp a_wheel, a_fast and du to their envelopes"
+    ],
+    "clamping": {
+      "max_accel_m_s2": 2.0,
+      "max_notional_rate_per_s": 60.0,
+      "why": "Re-reading a wheel topic after a dropout steps many m/s inside one 20 ms sample, which differentiates to hundreds of m/s^2 (2.4% of a run). A tram does about 0.7 m/s^2 in service. The features are clamped, not the input."
+    },
+    "wheel_scale": "The recorded bags are in m/s, so wheel_scale = 1.0. The jury stated km/h, which would mean 3.6. This factor multiplies v_front and v_rear before anything else and is the single most dangerous number in the pipeline: get it wrong and the speed is out by 3.6x.",
+    "state": "Filter state is per stream and initialised at the first sample. This reference case is the FIRST n samples of a run with fresh state; a port that has been running has different state, so compare only where both sides start from a known state.",
+    "output": "20 float32 values per sample, in the order of feature_names(). The slip gate consumes exactly this vector."
+  }
+}

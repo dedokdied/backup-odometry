@@ -1,0 +1,33 @@
+{
+  "feature_names": [
+    "v_wheel",
+    "v_front",
+    "v_rear",
+    "v_diff",
+    "v_fast",
+    "v_slow",
+    "v_long",
+    "a_wheel",
+    "a_fast",
+    "v_std",
+    "u",
+    "u_abs",
+    "u_tractive",
+    "u_brake",
+    "du",
+    "moving",
+    "vf_valid",
+    "vr_valid",
+    "gap_front",
+    "gap_rear"
+  ],
+  "speed_rmse_m_s": 0.09497907765912404,
+  "speed_mae_m_s": 0.04937783144573508,
+  "speed_bias_m_s": 0.0018707892327207184,
+  "baseline_rmse_m_s": 0.09497907765912404,
+  "slip_auc": 0.6529737041273377,
+  "slip_recall": 0.9989618373581336,
+  "slip_precision": 0.810804032261613,
+  "slip_threshold": 0.5,
+  "hz": 50.0
+}

@@ -1,0 +1,34 @@
+# Virtualenv and build output
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Derived data: rebuilt from data/ with `python -m odom_ml.data.build`.
+# Hundreds of MB of resampled float64 arrays, regenerable in about a minute.
+.cache/
+work/
+
+# The bag dataset is not in git.  It is ~824 MB of rosbag2 sqlite3 that the
+# organizers distribute separately; copy it to data/ and everything works.
+#   robocopy <dataset>\data  data\   /E
+#   robocopy <dataset>\tram_vehicle_msgs  data\tram_vehicle_msgs  /E
+data/*/
+data/*.json
+data/README.md
+
+# Training tables are large and fully regenerable
+artifacts/tables/
+
+# Pickles are not a safe interchange format; the JSON trees in
+# artifacts/models/speed_slip/ are what the C++ node consumes.
+*.joblib
+
+# Superseded by artifacts/models/speed_slip/
+artifacts/models/traction_v1/
+
+# Logs and scratch
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
