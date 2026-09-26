@@ -1,18 +1,16 @@
 schema_version: 1
 model_id: speed_residual_v1
-created_utc: "2026-09-26T20:32:10Z"
+created_utc: "2026-09-26T20:44:24Z"
 author: ML side
 backend: linear
 provenance:
-  data_revision: "3 dumps / 36 runs 2026-09-26"
+  data_revision: "features_final_dump only, 6 runs"
   sources:
     - features_final_dump.csv
-    - features_final_dump1 (1).csv
-    - features_final_dump2 (1).csv
-  n_rows_raw: 423201
-  n_rows_used: 423201
-  n_runs: 36
-  cv: GroupKFold(5) over 36 runs
+  n_rows_raw: 56415
+  n_rows_used: 56415
+  n_runs: 6
+  cv: GroupKFold(5) over 6 runs
   filter_wheels: true
 weights_file: speed_residual.bin
 weights_layout: "[W (3x16) row-major][b (3)], little-endian float64, 51 values"
@@ -40,39 +38,39 @@ outputs:
   - mu
 norm:
   mean:
-    - 0.04772061896368393
-    - 3.2492165165759643
-    - -0.23306112476038573
+    - 0.04836753304690242
+    - 3.0352864753370206
+    - -0.18372709224303815
     - 0.0
-    - 0.2632016408584125
-    - 8.971533833747014
-    - 8.96901466774096
-    - 1.0236353360858386
-    - 0.49615504963383356
-    - 0.5024069913348053
-    - 0.0006198303423385103
-    - 0.02500105589274364
-    - 0.24218852320554063
-    - 0.1410050416708869
-    - 25.420642644105428
-    - 0.41556330002882086
+    - 0.26300950708547377
+    - 7.85929266962462
+    - 7.808562736409856
+    - 1.0497827606454844
+    - 0.45176769834047675
+    - 0.5468444814766285
+    - 0.0017395154781884253
+    - 0.025000071040450236
+    - 0.23293074598594346
+    - 0.14142288416428253
+    - 26.04987545741691
+    - 0.3769760461199327
   std:
-    - 0.3724617889369732
-    - 3.8552865875990774
-    - 1.4440375404063837
+    - 0.372938957368484
+    - 4.103280574132868
+    - 1.3773152428811657
     - 1.0
-    - 0.008929804388326953
-    - 11.62097632816216
-    - 11.61757420301525
-    - 0.0629776625601665
-    - 0.47071996044206776
-    - 0.44025798024355967
-    - 0.41078259924471905
-    - 0.00021842763105809861
-    - 0.2869664804814784
-    - 0.2416145327837469
-    - 42.855152343016684
-    - 0.3935327498516965
+    - 0.008100826857755462
+    - 11.753844953001174
+    - 11.703125395036702
+    - 0.08686018717931289
+    - 0.4702203609125259
+    - 0.4431700059478422
+    - 0.4022363537715051
+    - 0.00017217107399601284
+    - 0.29523914332379264
+    - 0.25241615756482166
+    - 48.740325501777974
+    - 0.39353383467770514
 limits:
   max_a_residual: 1.5
   max_log_scale: 0.05
@@ -82,7 +80,7 @@ train:
   backend: Ridge
   alpha: 1.0
   seed: 42
-  data_revision: "3 dumps / 36 runs 2026-09-26"
+  data_revision: "features_final_dump only, 6 runs"
   b_scale_kept: true
   bags:
     - "features_final_dump#0"
@@ -91,40 +89,10 @@ train:
     - "features_final_dump#3"
     - "features_final_dump#4"
     - "features_final_dump#5"
-    - "features_final_dump1 (1)#0"
-    - "features_final_dump1 (1)#1"
-    - "features_final_dump1 (1)#2"
-    - "features_final_dump1 (1)#3"
-    - "features_final_dump1 (1)#4"
-    - "features_final_dump1 (1)#5"
-    - "features_final_dump1 (1)#6"
-    - "features_final_dump1 (1)#7"
-    - "features_final_dump1 (1)#8"
-    - "features_final_dump1 (1)#9"
-    - "features_final_dump2 (1)#0"
-    - "features_final_dump2 (1)#1"
-    - "features_final_dump2 (1)#10"
-    - "features_final_dump2 (1)#11"
-    - "features_final_dump2 (1)#12"
-    - "features_final_dump2 (1)#13"
-    - "features_final_dump2 (1)#14"
-    - "features_final_dump2 (1)#15"
-    - "features_final_dump2 (1)#16"
-    - "features_final_dump2 (1)#17"
-    - "features_final_dump2 (1)#18"
-    - "features_final_dump2 (1)#19"
-    - "features_final_dump2 (1)#2"
-    - "features_final_dump2 (1)#3"
-    - "features_final_dump2 (1)#4"
-    - "features_final_dump2 (1)#5"
-    - "features_final_dump2 (1)#6"
-    - "features_final_dump2 (1)#7"
-    - "features_final_dump2 (1)#8"
-    - "features_final_dump2 (1)#9"
   cv: GroupKFold(5) over runs
-  rows_total: 423201
-  rows_moving: 208427
-  rows_standstill: 214774
+  rows_total: 56415
+  rows_moving: 24595
+  rows_standstill: 31820
   sample_weight_standstill: 0.1
   sample_weight_moving: 1.0
   b_scale_log_scale_pearson_r: null
@@ -133,7 +101,7 @@ target_report:
   a_residual:
     trained: true
     p1: -1.5
-    p50: 0.058560547
+    p50: 0.058463817
     p99: 1.5
     abs_max: 1.5
     frac_over_limit: 0.0
@@ -146,80 +114,50 @@ validation_metrics:
     -
       fold: 0
       held_out_runs:
-        - "features_final_dump#0"
-        - "features_final_dump#1"
-        - "features_final_dump1 (1)#1"
-        - "features_final_dump1 (1)#4"
-        - "features_final_dump2 (1)#11"
-        - "features_final_dump2 (1)#13"
-        - "features_final_dump2 (1)#18"
-      rows: 84644
+        - "features_final_dump#2"
+      rows: 14237
     -
       fold: 1
       held_out_runs:
-        - "features_final_dump#2"
-        - "features_final_dump1 (1)#0"
-        - "features_final_dump1 (1)#2"
-        - "features_final_dump1 (1)#7"
-        - "features_final_dump2 (1)#12"
-        - "features_final_dump2 (1)#16"
-        - "features_final_dump2 (1)#3"
-        - "features_final_dump2 (1)#9"
-      rows: 84782
+        - "features_final_dump#5"
+      rows: 14067
     -
       fold: 2
       held_out_runs:
-        - "features_final_dump#3"
-        - "features_final_dump1 (1)#3"
-        - "features_final_dump1 (1)#6"
-        - "features_final_dump1 (1)#8"
-        - "features_final_dump2 (1)#17"
-        - "features_final_dump2 (1)#19"
-        - "features_final_dump2 (1)#6"
-      rows: 84643
+        - "features_final_dump#4"
+      rows: 7102
     -
       fold: 3
       held_out_runs:
-        - "features_final_dump#4"
-        - "features_final_dump1 (1)#9"
-        - "features_final_dump2 (1)#10"
-        - "features_final_dump2 (1)#14"
-        - "features_final_dump2 (1)#15"
-        - "features_final_dump2 (1)#4"
-        - "features_final_dump2 (1)#8"
-      rows: 84618
+        - "features_final_dump#3"
+      rows: 7033
     -
       fold: 4
       held_out_runs:
-        - "features_final_dump#5"
-        - "features_final_dump1 (1)#5"
-        - "features_final_dump2 (1)#0"
-        - "features_final_dump2 (1)#1"
-        - "features_final_dump2 (1)#2"
-        - "features_final_dump2 (1)#5"
-        - "features_final_dump2 (1)#7"
-      rows: 84514
+        - "features_final_dump#0"
+        - "features_final_dump#1"
+      rows: 13976
   regimes:
     all:
       name: all
-      n: 423201
-      mae: 0.2798961201638363
-      rmse: 0.4474009424865704
-      bias: -0.01547331614883236
-      baseline_rmse: 0.9555147871980012
+      n: 56415
+      mae: 0.1473114404758781
+      rmse: 0.28470216363988077
+      bias: 0.005488941214814391
+      baseline_rmse: 0.890832491576669
     standstill (v<=1.8):
       name: "standstill (v<=1.8)"
-      n: 214774
-      mae: 0.16949121259714514
-      rmse: 0.26491732851689126
-      bias: -0.03209988224647967
-      baseline_rmse: 0.8222912754277457
+      n: 31820
+      mae: 0.09044153631036034
+      rmse: 0.18684786157878813
+      bias: 0.010158832755462612
+      baseline_rmse: 0.7534110208842127
     moving (v>1.8):
       name: "moving (v>1.8)"
-      n: 208427
-      mae: 0.3936630679092269
-      rmse: 0.5780245237923466
-      bias: 0.0016595606236400385
-      baseline_rmse: 1.0656898459645106
+      n: 24595
+      mae: 0.22088738479573067
+      rmse: 0.37517128831708957
+      bias: -0.0005527725003076417
+      baseline_rmse: 1.0377295474174728
   trained_outputs:
     - a_residual

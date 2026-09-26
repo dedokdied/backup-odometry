@@ -42,3 +42,5 @@ models_moving/
 # single-run experiment output, not the shipped artefact
 models_final_only/
 
+models_probe/
+

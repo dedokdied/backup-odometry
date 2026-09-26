@@ -293,3 +293,61 @@ with moving RMSE refusing to move as clean data was added. The next request to
 C++ is a dump with the reference unclipped, or at least a per-row flag saying
 whether the target hit the limit, so saturated rows can be excluded or
 down-weighted instead of being learned as if they were real.
+
+## Shipped artefact
+
+`models/ml_model.yaml` + `models/speed_residual.bin` are trained on
+`features_final_dump.csv` alone: 56 415 rows, 6 runs, 5-fold GroupKFold grouped
+by run.
+
+| regime | n | MAE | RMSE | bias | baseline RMSE |
+|---|---|---|---|---|---|
+| all | 56 415 | 0.147 | 0.285 | +0.006 | 0.891 |
+| standstill (v <= 1.8 km/h) | 31 820 | 0.090 | 0.187 | +0.010 | 0.753 |
+| moving (v > 1.8 km/h) | 24 595 | 0.221 | 0.375 | -0.001 | 1.038 |
+
+`features_final_dump1` and `features_final_dump2` are **not** used. They are
+noisier (jerk p99 37.5 vs 7.1 m/s^3) and more saturated, and adding them moved
+moving RMSE from 0.375 to 0.578.
+
+## Requirements on the next dump
+
+1. **`target_clipped` (bool), per row.** The dump clips the target on export, so
+   ~30% of rows are a saturation indicator rather than a correction, and they
+   are currently indistinguishable from real ones. The trainer already accepts
+   the column:
+   `--clipped-rows drop` removes them, `--clipped-rows downweight` with
+   `--clipped-weight` keeps them at reduced weight. Without the column those
+   flags refuse to run rather than silently doing nothing.
+2. **Schema version in the file name**, e.g. `features_v2_*.csv`. Run identity
+   is currently recovered by counting resets in `t`, which is fragile: a clock
+   correction inside a run would move the boundaries silently. One file per run
+   is also wanted, so no run boundary has to be guessed.
+3. **The reference clip and the target clip are different mechanisms.** The
+   reference is clamped at exactly +/-2.000 in all three dumps, but only
+   1.7-5.3% of rows reach that limit, while 21.7-29.6% of targets sit at +/-1.50.
+   So most saturation comes from the target being clipped on export, not from
+   the physics model saturating. Fixing the reference clamp alone will not
+   remove it.
+
+## Was the good dump good by luck?
+
+No, and the mechanism is now known. The export clip is identical everywhere:
+`a_true` is exactly +/-2.000000 in all three files, so no different clip was
+applied. What differs is how hard the drives were:
+
+| file | rows at the +/-2.0 reference limit | targets at +/-1.50 |
+|---|---|---|
+| features_final_dump.csv | 1.69% | 21.7% |
+| features_final_dump1 (1).csv | 5.21% | 26.2% |
+| features_final_dump2 (1).csv | 5.29% | 29.6% |
+
+The physics model saturates three times as often in the newer dumps, and at
+matched speed bands the difference localises to 2-10 m/s (28.6% vs 36.6% and
+39.9%), which is where hard braking and acceleration live. So the newer dumps
+are simply more aggressive driving, not a different export.
+
+The conclusion is still uncomfortable: `features_final_dump` is the best of the
+three, not a clean one. It carries 21.7% saturated targets, and its advantage is
+a property of how gently it was driven, so it is not a safe basis for claiming
+the pipeline is healthy.

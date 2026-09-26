@@ -155,7 +155,17 @@ def load_dumps(paths: list[Path], group_col: str | None) -> dict:
                 df["__group__"] = p.stem
                 grouping = "source file name (no t column to split runs on)"
         df["__source__"] = p.name
-        frames.append(df[list(required) + ["__group__", "__source__"]])
+        extra = ["__group__", "__source__"]
+        # Optional, requested by ML_CONTRACT.md: rows whose target hit the export
+        # clip are an indicator of saturation, not a correction. Carried only if
+        # the dump provides it, so older dumps still load unchanged.
+        if "target_clipped" in df.columns:
+            df["__clipped__"] = df["target_clipped"].astype(bool)
+            extra.append("__clipped__")
+            print(f"  {p.name}: has target_clipped flag")
+        else:
+            print(f"  {p.name}: NO target_clipped column")
+        frames.append(df[list(required) + extra])
         print(f"  {p.name}: grouped by {grouping}")
     if not frames:
         raise DumpError("no rows loaded")
@@ -195,6 +205,11 @@ def load_dumps(paths: list[Path], group_col: str | None) -> dict:
         "Y": Y_raw[keep],
         "group": data["__group__"].to_numpy(dtype=object),
         "source": data["__source__"].to_numpy(dtype=object),
+    "clipped": (
+        data["__clipped__"].to_numpy(dtype=bool)
+        if "__clipped__" in data.columns
+        else None
+    ),
         "available": available,
         "missing_targets": missing_targets,
     }
@@ -439,6 +454,20 @@ def main() -> None:
         help="drop rows below this body speed, km/h (feature 'v')",
     )
     ap.add_argument(
+        "--clipped-rows",
+        choices=("keep", "drop", "downweight"),
+        default="keep",
+        help="rows flagged by the target_clipped column: keep (default), drop, "
+        "or downweight them, since a saturated target is an indicator rather "
+        "than a correction",
+    )
+    ap.add_argument(
+        "--clipped-weight",
+        type=float,
+        default=0.1,
+        help="sample weight for target_clipped rows under --clipped-rows downweight",
+    )
+    ap.add_argument(
         "--no-clip",
         action="store_true",
         help="train on the raw targets instead of clipping to the runtime limits",
@@ -503,6 +532,39 @@ def main() -> None:
         )
         if not len(X):
             raise SystemExit("no rows left after the wheel filter")
+
+    # Rows whose target hit the export clip. Without the flag we cannot tell
+    # them apart, so the default is to leave them alone and say so.
+    clipped = data["clipped"]
+    if clipped is None:
+        if args.clipped_rows != "keep":
+            raise SystemExit(
+                "--clipped-rows needs a target_clipped column, which this dump lacks"
+            )
+        clipped = np.zeros(X.shape[0], dtype=bool)
+    else:
+        if not args.filter_wheels:
+            clipped = clipped[: X.shape[0]]
+        else:
+            raise SystemExit(
+                "target_clipped handling currently requires --filter-wheels, "
+                "which re-indexes the rows"
+            )
+    if args.clipped_rows == "drop":
+        n_before = len(X)
+        keep = ~clipped
+        X, Yraw, groups, clipped = X[keep], Yraw[keep], groups[keep], clipped[keep]
+        print(
+            f"  drop target_clipped: {len(X)} of {n_before} rows kept "
+            f"({int(clipped.sum())} saturated rows removed)"
+        )
+        if not len(X):
+            raise SystemExit("no rows left after dropping target_clipped rows")
+    elif args.clipped_rows == "downweight":
+        print(
+            f"  downweight target_clipped: {int(clipped.sum())} rows to "
+            f"weight {args.clipped_weight}"
+        )
 
     if args.min_speed_kph > 0.0:
         v = X[:, FEATURE_NAMES.index("v")]
@@ -571,6 +633,8 @@ def main() -> None:
     folds, fold_runs = group_folds(groups, n_splits=args.folds, seed=args.seed)
     vi = FEATURE_NAMES.index("v")
     weights = regime_weights(X[:, vi])
+    if args.clipped_rows == "downweight" and clipped.any():
+        weights = weights * np.where(clipped, args.clipped_weight, 1.0)
     print(
         f"\n{len(list(folds))}-fold GroupKFold over {len(set(groups.tolist()))} runs "
         f"(alpha={args.alpha}, seed={args.seed})"
