@@ -30,7 +30,11 @@ b = values[48:51]
 ```
 z = (x - norm.mean) / norm.std        # elementwise, 16 values
 y = W @ z + b                         # 3 values
-```
+`
+
+There is no clipping of z. A winsorisation at 8 sigma was tried and measured:
+it moved the held-out moving RMSE by 0.008 m/s^2, so it was removed rather than
+carried as a contract obligation.``
 
 Normalisation lives in the descriptor and **must** be applied by the caller
 before the matrix product. The exported weights act on standardised inputs, not
@@ -136,3 +140,41 @@ points; treat the square as fixed and the origin as the start of each run.
 difference from the start — their example 167.41 matches the absolute heights in
 the dataset. `x` and `y` are relative. The mix is unusual and worth confirming
 with the jury, but both readings are implemented and documented.
+
+
+## Training status: TEMPORARY, not fit for the moving regime
+
+This artefact was trained on **4 feature dumps** so the C++ integration path could
+be exercised end to end. It is wired up correctly; it is not a finished model.
+
+Held-out metrics, pooled over 4-fold GroupKFold grouped by run:
+
+| regime | n | MAE | RMSE | bias | baseline RMSE |
+|---|---|---|---|---|---|
+| all | 20 118 | 2.010 | 5.781 | +1.736 | 0.799 |
+| standstill (v <= 1.8 km/h) | 14 145 | 0.183 | 0.330 | -0.019 | 0.562 |
+| **moving (v > 1.8 km/h)** | 5 973 | 6.337 | **10.598** | **+5.891** | 1.179 |
+
+Standalone limit is 0.33 m/s^2, better than the constant baseline. Moving is 9x
+**worse** than baseline. Do not ship this for driving.
+
+Two independent causes, both measured:
+
+1. **Too few moving runs.** Only 2 of 4 dumps contain motion (7bfbb5ed 481 moving
+   rows, bcc9e7a2 638). Leave-one-run-out therefore trains the moving head on a
+   single run, while 14 145 standstill rows pull towards a constant.
+
+2. **The target is noise-dominated.** In run bcc9e7a2, _model is pinned at
+   exactly +2.2000 m/s^2 across consecutive samples (the physics model is
+   saturating), and 	arget_a_residual moves from -3.744 to -1.508 m/s^2 within
+   60 ms. The implied true acceleration swings -1.54 -> +0.69 m/s^2 in 60 ms,
+   which is not physically achievable for a tram. In the moving regime the target
+   has std 1.41 m/s^2 and spans -3.74..+4.14; 21.8% of all rows fall outside the
+   +/-1.50 clip. A corrector cannot predict a target whose noise exceeds its
+   signal, so cause 1 alone will not make the moving head work.
+
+Retrain is required once both are addressed: 20-30 moving runs, and a target
+derived from a smooth, clamp-free acceleration reference.
+
+	arget_log_scale and 	arget_mu are NaN in every dump, so those two output
+rows are exported as zeros. They are not trained.

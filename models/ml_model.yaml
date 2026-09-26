@@ -1,12 +1,11 @@
 schema_version: 1
 model_id: speed_residual_v1
-created_utc: "2026-09-26T18:36:44Z"
+created_utc: "2026-09-26T19:34:01Z"
 author: ML side
 backend: linear
 weights_file: speed_residual.bin
 weights_layout: "[W (3x16) row-major][b (3)], little-endian float64, 51 values"
-apply: "z = clip((x - mean) / std, -z_clip, z_clip); y = W @ z + b"
-z_clip: 8.0
+apply: "y = W @ ((x - mean) / std) + b"
 features:
   - u
   - v
@@ -25,9 +24,9 @@ features:
   - v_sq
   - force_ratio
 outputs:
-  - target_a_residual
-  - target_log_scale
-  - target_mu
+  - a_residual
+  - log_scale
+  - mu
 norm:
   mean:
     - 0.026630188737001688
@@ -88,16 +87,16 @@ train:
   b_scale_log_scale_pearson_r: null
   notes: Trained on the C++ feature dump only. a_model is pure physics; slip_index is the C++ detector and is not blended with any Python model. grade is 0.0 throughout because the map is disabled.
 target_report:
-  target_a_residual:
+  a_residual:
     trained: true
     p1: -3.48435663073
     p50: 0.058463817
     p99: 4.151179904
     abs_max: 4.172407947
     frac_over_limit: 0.21806342578785168
-  target_log_scale:
+  log_scale:
     trained: false
-  target_mu:
+  mu:
     trained: false
 validation_metrics:
   folds:
@@ -125,23 +124,23 @@ validation_metrics:
     all:
       name: all
       n: 20118
-      mae: 2.012885340377434
-      rmse: 5.785719482718567
-      bias: 1.7363581314871674
+      mae: 2.0098718647554192
+      rmse: 5.781150109834132
+      bias: 1.7356976638902692
       baseline_rmse: 0.7994270825068125
     standstill (v<=1.8):
       name: "standstill (v<=1.8)"
       n: 14145
-      mae: 0.18387651237777564
-      rmse: 0.3325811306792507
-      bias: -0.02020870194496252
+      mae: 0.1826067628944978
+      rmse: 0.33002566054260785
+      bias: -0.019089340582097342
       baseline_rmse: 0.561628671851321
     moving (v>1.8):
       name: "moving (v>1.8)"
       n: 5973
-      mae: 6.344264860225947
-      rmse: 10.605922284348049
-      bias: 5.896183656164463
+      mae: 6.337121967856497
+      rmse: 10.597715749269842
+      bias: 5.891308274682437
       baseline_rmse: 1.1785616018878835
   trained_outputs:
-    - target_a_residual
+    - a_residual

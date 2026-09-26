@@ -49,7 +49,14 @@ FEATURE_NAMES: tuple[str, ...] = (
     "force_ratio",    # 15 |F_drive - F_brake| / adhesion limit, [0, 1]
 )
 
-TARGET_NAMES: tuple[str, ...] = ("target_a_residual", "target_log_scale", "target_mu")
+#: column names in the C++ dump
+TARGET_COLUMNS: tuple[str, ...] = ("target_a_residual", "target_log_scale", "target_mu")
+
+#: names the runtime uses, from kOutputNames in ml_features.hpp.  The dump
+#: prefixes them with target_; the contract does not, and validate_artifact.py
+#: compares the descriptor against the header literally, so the two must not be
+#: conflated.
+TARGET_NAMES: tuple[str, ...] = ("a_residual", "log_scale", "mu")
 
 N_FEATURES = len(FEATURE_NAMES)
 N_OUTPUTS = len(TARGET_NAMES)
@@ -74,11 +81,6 @@ MOVING_WEIGHT = 1.0
 GROUP_COLUMNS = ("bag_id", "bag", "run_id", "run", "source_bag", "file")
 
 RIDGE_ALPHA = 1.0
-#: standardised inputs are clipped to this many sigma before the matrix product.
-#: Several features carry rare spikes (cmd_rate reaches 54 sigma), and a linear
-#: model on un-clipped inputs turns those into large coefficients that then
-#: explode on a held-out run.  The runtime must apply the same clip.
-Z_CLIP = 8.0
 SEED = 42
 
 
@@ -125,7 +127,7 @@ def load_dumps(paths: list[Path], group_col: str | None) -> dict:
     import pandas as pd
 
     frames = []
-    required = (*FEATURE_NAMES, *TARGET_NAMES)
+    required = (*FEATURE_NAMES, *TARGET_COLUMNS)
     for p in paths:
         df = pd.read_csv(p)
         missing = [c for c in required if c not in df.columns]
@@ -151,10 +153,10 @@ def load_dumps(paths: list[Path], group_col: str | None) -> dict:
     data = pd.concat(frames, ignore_index=True)
     n_before = len(data)
 
-    Y_raw = data[list(TARGET_NAMES)].to_numpy(dtype=np.float64)
+    Y_raw = data[list(TARGET_COLUMNS)].to_numpy(dtype=np.float64)
     finite_per_target = np.isfinite(Y_raw).sum(axis=0)
     available = [j for j in range(N_OUTPUTS) if finite_per_target[j] > 0]
-    missing_targets = [TARGET_NAMES[j] for j in range(N_OUTPUTS) if finite_per_target[j] == 0]
+    missing_targets = [TARGET_COLUMNS[j] for j in range(N_OUTPUTS) if finite_per_target[j] == 0]
     if not available:
         raise DumpError(
             f"every target is NaN across all {n_before} rows; nothing can be trained"
@@ -292,7 +294,7 @@ def fit_linear(
     from sklearn.linear_model import Ridge
 
     model = Ridge(alpha=alpha, fit_intercept=True, random_state=seed)
-    model.fit(np.clip(Xtr, -Z_CLIP, Z_CLIP), Ytr, sample_weight=sample_weight)
+    model.fit(Xtr, Ytr, sample_weight=sample_weight)
     return model
 
 
@@ -491,7 +493,7 @@ def main() -> None:
             if j not in available:
                 Y[:, j] = 0.0
         target_report = {
-            TARGET_NAMES[j]: (
+            TARGET_COLUMNS[j]: (
                 {
                     "trained": True,
                     "clipped": False,
@@ -607,9 +609,8 @@ def main() -> None:
         if j not in available:
             W[j, :] = 0.0
             bias[j] = 0.0
-            print(f"  {TARGET_NAMES[j]}: no data, weights emitted as zeros")
+            print(f"  {TARGET_COLUMNS[j]}: no data, weights emitted as zeros")
 
-    doc_extra = {"z_clip": Z_CLIP}
     out = Path(args.out)
     bin_path = out / "speed_residual.bin"
     n = write_weights_bin(bin_path, W, bias)
@@ -634,8 +635,7 @@ def main() -> None:
         "backend": "linear",
         "weights_file": bin_path.name,
         "weights_layout": "[W (3x16) row-major][b (3)], little-endian float64, 51 values",
-        "apply": "z = clip((x - mean) / std, -z_clip, z_clip); y = W @ z + b",
-        "z_clip": Z_CLIP,
+        "apply": "y = W @ ((x - mean) / std) + b",
         "features": [FEATURE_NAMES[i] for i in keep_idx],
         "outputs": list(TARGET_NAMES),
         "norm": {
