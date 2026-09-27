@@ -237,6 +237,16 @@ void Estimator::onGnssAuxVel(double t, double ve, double vn, double vu) {
 
 bool Estimator::loadPathMap(const std::string& file) {
   std::lock_guard<std::mutex> lock(mtx_);
+  return loadPathMapLocked(file);
+}
+
+// The caller already holds mtx_ when it comes from step(), so this half must not
+// take the lock again. mtx_ is a plain std::mutex, so the second lock_guard on it
+// is a self-deadlock, not a re-entrant no-op: the process stays alive, RSS stops
+// moving, every thread parks in futex_do_wait, and the node silently stops
+// publishing. That is exactly what happened here, at the first cycle where
+// travel_accum_m_ reached path_map.min_travel_m.
+bool Estimator::loadPathMapLocked(const std::string& file) {
   const std::string f = file.empty() ? p_.path_map.file : file;
   if (f.empty()) return false;
   if (!map_.loadCsv(f)) return false;
@@ -417,7 +427,7 @@ void Estimator::tryLoadPathMap(double t) {
       const double dx = p_now.easting - dir_ref_easting_;
       // fwd is stored with easting decreasing, rev with easting increasing.
       const bool fwd = (dx < 0.0);
-      loadPathMap(fwd ? map_file_fwd_ : map_file_rev_);
+      loadPathMapLocked(fwd ? map_file_fwd_ : map_file_rev_);
       map_dir_resolved_ = true;
     }
   }

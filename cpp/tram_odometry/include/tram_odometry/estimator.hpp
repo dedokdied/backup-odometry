@@ -102,6 +102,10 @@ class Estimator {
   bool tryInitialise(double t);
   void updateGnssSnapshot(const GnssSnapshot& g);
   void tryLoadPathMap(double t);
+
+  /// Same as loadPathMap() but without taking mtx_. Only for call paths that
+  /// already hold it, i.e. everything reached from step().
+  bool loadPathMapLocked(const std::string& file);
   bool gnssQualityOk(const GnssSnapshot& g, double t) const;
   void accumulateReference(double t, const GnssSnapshot& g);
   void updatePositionOutput(double t);
