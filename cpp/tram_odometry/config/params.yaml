@@ -168,7 +168,7 @@ tram_odometry:
     # отсутствии артефакта решение работает на чистой физике без изменений.
     ml:
       enable: true
-      model_dir: ""               # пусто = share/tram_odometry/models из пакета
+      model_dir: "models"
       descriptor: "ml_model.yaml"
       strict: false               # true = требовать валидную модель, иначе падать
       blend: 1.0                  # 0 = только физика, 1 = полная коррекция
@@ -194,7 +194,7 @@ tram_odometry:
     # ------------------------------------------------------------- pathgraph / карта
     path_map:
       enable: true
-      file: ""                   # путь к карте; пусто = без проекции
+      file: "artifacts/route/route_map.csv"  # 4710 точек, UTM 37N
       frame_convention: "utm"    # utm | enu
       search_radius_m: 25.0
       max_projection_error_m: 8.0
