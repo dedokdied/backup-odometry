@@ -7,6 +7,13 @@
 
 namespace tram {
 namespace {
+// One-shot wheel-scale calibration. 1.0 m/s and 0.2 m/s^2 are the same gates
+// calibrateScaleFromVelocity and adaptFriction already use; the window is 5 s.
+constexpr double kScaleCalMinSpeed = 1.0;
+constexpr double kScaleCalMaxAccel = 0.2;
+constexpr size_t kScaleCalWindow = 250;
+}  // namespace
+namespace {
 
 constexpr double kKmhToMs = 1.0 / 3.6;
 constexpr double kTwoPi = 2.0 * 3.14159265358979323846;
@@ -470,6 +477,7 @@ bool Estimator::step(double t) {
   const double v_wheel_mean =
       0.5 * ((front_valid ? front_.v : 0.0) + (rear_valid ? rear_.v : 0.0));
   const double a_wheel_mean = 0.5 * ((front_valid ? front_.a : 0.0) + (rear_valid ? rear_.a : 0.0));
+  if (!scale_cal_done_) scale_cal_travelled_ += std::fabs(v_wheel_mean) * dt;
   const double omega_f = front_valid ? front_.v / p_.vehicle.wheel_radius_m : 0.0;
   const double omega_r = rear_valid ? rear_.v / p_.vehicle.wheel_radius_m : 0.0;
 
@@ -598,6 +606,39 @@ bool Estimator::step(double t) {
       double s_ref = 0.0;
       if (referencePathDistance(p_now, s_ref)) {
         if (observer_.updateGnssPath(s_ref, p_.observer.r_gnss_pos)) est_.gnss_used = true;
+      }
+    } else if (scale_cal_travelled_ >= p_.gnss.min_travel_for_calib_m &&
+               std::fabs(v_wheel_mean) >= kScaleCalMinSpeed &&
+               std::fabs(a_wheel_mean) <= kScaleCalMaxAccel) {
+      // Scale calibration on accumulated travel, not on the init window.
+      //
+      // The run starts from a standstill, so inside the 2.5 s window
+      // |v_wheel| is exactly 0 and calibrateScaleFromVelocity returns on
+      // `|v_wheel| < 1.0`. Motion starts at 5.5-11.8 s, by which time the window
+      // has closed, so b_scale stayed pinned at 1.0 on every run and the
+      // systematic wheel-scale error integrated straight into position.
+      //
+      // One shot, and only at a steady state. A continuous 50 Hz stream of GNSS
+      // innovations integrates into b faster than P(kB,kB) collapses and b
+      // wanders into the 0.80/1.25 clamps; measured std 0.027-0.038 against
+      // 0.001 for a single update. And a lower speed floor fires during
+      // acceleration, where the speed ratio is not the wheel scale at all.
+      scale_cal_samples_.push_back(std::hypot(g.ve, g.vn));
+      scale_cal_wheels_.push_back(v_wheel_mean);
+      if (scale_cal_samples_.size() >= kScaleCalWindow) {
+        std::vector<double> vs = scale_cal_samples_;
+        std::vector<double> ws = scale_cal_wheels_;
+        std::sort(vs.begin(), vs.end());
+        std::sort(ws.begin(), ws.end());
+        const double v_ref = vs[vs.size() / 2];
+        const double v_wheel = ws[ws.size() / 2];
+        if (v_ref > 0.0 && std::fabs(v_wheel) >= 1.0) {
+          observer_.calibrateScaleFromVelocity(v_ref, v_wheel);
+          est_.gnss_used = true;
+        }
+        scale_cal_done_ = true;
+        scale_cal_samples_.clear();
+        scale_cal_wheels_.clear();
       }
     } else if (p_.observer.gnss_trust_after_init == "gated") {
       // Strictly gated: only a velocity update, and only when the GNSS does not

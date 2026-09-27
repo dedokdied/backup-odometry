@@ -7,6 +7,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "tram_odometry/geo.hpp"
 #include "tram_odometry/longitudinal_model.hpp"
@@ -191,6 +192,14 @@ class Estimator {
   double ml_log_scale_ = 0.0;
   double ml_inference_ms_ = 0.0;
   double ml_mu_ = 0.0;
+
+  // --- wheel-scale calibration on accumulated travel -------------------------
+  // See the block in estimator.cpp for why the 2.5 s init window cannot work:
+  // the run starts from a standstill, so |v_wheel| is 0 while the window is open.
+  double scale_cal_travelled_ = 0.0;
+  std::vector<double> scale_cal_samples_;
+  std::vector<double> scale_cal_wheels_;
+  bool scale_cal_done_ = false;
   bool ml_applied_ = false;
   double prev_u_ = 0.0;
   bool have_prev_u_ = false;
