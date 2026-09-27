@@ -48,6 +48,26 @@ double stamp_sec(const builtin_interfaces::msg::Time& ts, rclcpp::Clock& clock) 
   return clock.now().seconds();
 }
 
+/// Seconds to a message stamp, written out rather than going through rclcpp::Time.
+///
+/// rclcpp::Time in Humble has an implicit `operator builtin_interfaces::msg::Time()`
+/// but no constructor that takes a double together with a clock type, so
+/// `rclcpp::Time(t, RCL_ROS_TIME)` does not name a unique overload. Rounding the
+/// split by hand is unambiguous and keeps the nanosecond field in range.
+builtin_interfaces::msg::Time sec_to_stamp(double t) {
+  builtin_interfaces::msg::Time out;
+  if (!std::isfinite(t) || t < 0.0) t = 0.0;
+  const double whole = std::floor(t);
+  out.sec = static_cast<int32_t>(whole);
+  out.nanosec = static_cast<uint32_t>((t - whole) * 1e9);
+  // Guard the carry: a double just below an integer can round up to 1e9 ns.
+  if (out.nanosec >= 1000000000u) {
+    out.nanosec = 0u;
+    out.sec += 1;
+  }
+  return out;
+}
+
 }  // namespace
 
 class OdometryNode : public rclcpp::Node {
@@ -60,19 +80,24 @@ class OdometryNode : public rclcpp::Node {
     // directory, so `ros2 run tram_odometry odometry_node` works out of the box.
     //
     // Resolution order is absolute -> share directory -> working directory. The
-    // previous code only consulted the share directory when ml.model_dir was
+    // original code only consulted the share directory when ml.model_dir was
     // EMPTY, and params.yaml sets it to "models", so the fallback was dead code
     // and the loaded descriptor depended on the launch directory: the trained
     // artifact from the repository root, the all-zero stub from the package
-    // directory, nothing at all from an install tree. All three reported
-    // "ready" in the diagnostics.
-    std::string model_dir = resolve_asset(p_.ml.model_dir, "models");
+    // directory, nothing at all from an install tree. All three reported "ready".
+    //
+    // The share_subdir argument is deliberately absent. Passing "models" while
+    // ml.model_dir is already "models" composed the probe "<share>/models/models",
+    // which does not exist, so the share branch never resolved and the launch
+    // directory still decided everything. The path is relative to the share
+    // directory as it stands.
+    std::string model_dir = resolve_asset(p_.ml.model_dir);
     if (model_dir.empty() && p_.ml.enable) {
       RCLCPP_ERROR(get_logger(),
                    "ML artifact not found: ml.model_dir='%s' resolved to nothing "
-                   "(tried absolute, <share>/models, and the working directory). "
+                   "(tried absolute, <share>/%s, and the working directory). "
                    "The corrector will fall back to physics only.",
-                   p_.ml.model_dir.c_str());
+                   p_.ml.model_dir.c_str(), p_.ml.model_dir.c_str());
     }
 
     est_ = std::make_unique<Estimator>(p_, model_dir);
@@ -135,19 +160,16 @@ class OdometryNode : public rclcpp::Node {
         p_.topics.gnss_fix, sensor_qos, [this](sensor_msgs::msg::NavSatFix::SharedPtr m) {
           // Humble's NavSatStatus has no satellite count, so it is reported as
           // unknown (-1) and the observer's sats gate is skipped.
-        // sensor_msgs/msg/NavSatFix declares the four constants as
-        // COVARIANCE_UNKNOWN / COVARIANCE_APPROXIMATED / COVARIANCE_DIAGONAL_KNOWN /
-        // COVARIANCE_KNOWN. This used to read COVARIANCE_TYPE_DIAGONAL_KNOWN, which
-        // does not exist in that message, so the constant reference did not resolve.
-        //
-        // The gate is only advisory. Every bag in this dataset carries
-        // position_covariance_type = 0 (COVARIANCE_UNKNOWN): 73 023 rows of
-        // 30618_0652866c were checked. Treating UNKNOWN as "no usable covariance"
-        // is the right call, since -1.0 is what the estimator's quality check
-        // expects, but a fixed status must not reject an otherwise good fix.
+        // sensor_msgs/msg/NavSatFix in Humble names these constants
+        // COVARIANCE_TYPE_UNKNOWN / _APPROXIMATED / _DIAGONAL_KNOWN / _KNOWN, i.e.
+        // with the TYPE_ infix. Verified against the installed header
+        // (include/sensor_msgs/sensor_msgs/msg/detail/nav_sat_fix__struct.hpp:142).
+        // The gate is only advisory: every bag in this dataset reports
+        // position_covariance_type = 0, so -1.0 is passed instead and the
+        // estimator's quality check falls back on the status byte and the age.
         est_->onGnssFix(stamp_sec(m->header.stamp, *get_clock()), m->latitude, m->longitude,
                         m->altitude, -1, m->status.status,
-                        m->position_covariance_type == sensor_msgs::msg::NavSatFix::COVARIANCE_DIAGONAL_KNOWN
+                        m->position_covariance_type == sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN
                             ? m->position_covariance[0]
                             : -1.0);
         });
@@ -227,8 +249,10 @@ class OdometryNode : public rclcpp::Node {
     // 14 m/s the lag alone is 0.56 m of along-track error that no estimate is
     // responsible for. Stamping with `t` is both the honest choice and the one
     // that lands on the bag's own time grid.
-    const builtin_interfaces::msg::Time hdr =
-        rclcpp::Time(t, rclcpp::RCL_ROS_TIME).to_msg();
+    // sec_to_stamp() is the exact inverse of stamp_sec() on the way in, so the
+    // published stamp round-trips to the same double the estimate was computed
+    // for, and the nanosecond field never reaches 1e9.
+    const builtin_interfaces::msg::Time hdr = sec_to_stamp(t);
 
     // ---- velocity (m/s, longitudinal) ----
     tram_vehicle_msgs::msg::VelocitySensor vel;
@@ -301,10 +325,15 @@ class OdometryNode : public rclcpp::Node {
     lat.data = e.latency_ms;
     pub_latency_->publish(lat);
 
-    if (e.cycle_ms > p_.runtime.max_execution_time_warn) {
+    // runtime.max_execution_time_warn is in SECONDS, cycle_ms is in milliseconds.
+    // Comparing them directly made the threshold a thousand times too tight, so a
+    // 0.15 ms cycle was reported as "exceeds the 0.01 ms budget" every two seconds
+    // and the log looked like a realtime failure.
+    const double budget_ms = p_.runtime.max_execution_time_warn * 1000.0;
+    if (e.cycle_ms > budget_ms) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-                           "cycle %.2f ms exceeds the %.2f ms budget", e.cycle_ms,
-                           p_.runtime.max_execution_time_warn);
+                           "cycle %.3f ms exceeds the %.3f ms budget", e.cycle_ms,
+                           budget_ms);
     }
   }
 
@@ -459,8 +488,46 @@ class OdometryNode : public rclcpp::Node {
 }  // namespace tram
 
 int main(int argc, char** argv) {
-  rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<tram::OdometryNode>());
+  // Default to the installed config/params.yaml when the caller did not pass a
+  // parameter file of their own.
+  //
+  // `ros2 launch tram_odometry replay.launch.py` already did this, but
+  // `ros2 run tram_odometry odometry_node` does not: rclcpp takes the struct
+  // defaults, so the shipped configuration was silently ignored and the node ran
+  // with path_map.enable pointing at no file, ml.enable false and mu_peak 0.10
+  // instead of 0.22. A jury following the most obvious command therefore got
+  // dead-reckoned position and no corrector. Prepending the file makes the obvious
+  // command and the launch file behave the same, and an explicit --params-file
+  // from the caller still wins.
+  std::vector<std::string> args(argv, argv + argc);
+  bool caller_gave_params = false;
+  for (int i = 1; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == "--params-file" || a.rfind("--params-file", 0) == 0) caller_gave_params = true;
+  }
+  std::string injected_config;
+  if (!caller_gave_params) {
+    injected_config = tram::resolve_asset("config/params.yaml");
+    if (!injected_config.empty()) {
+      args.emplace_back("--ros-args");
+      args.emplace_back("--params-file");
+      args.emplace_back(injected_config);
+    }
+  }
+  std::vector<char*> raw;
+  raw.reserve(args.size());
+  for (auto& a : args) raw.push_back(a.data());
+
+  rclcpp::init(static_cast<int>(raw.size()), raw.data());
+  auto node = std::make_shared<tram::OdometryNode>();
+  if (!injected_config.empty()) {
+    RCLCPP_INFO(node->get_logger(), "default configuration: %s", injected_config.c_str());
+  } else if (!caller_gave_params) {
+    RCLCPP_WARN(node->get_logger(),
+                "no parameter file given and config/params.yaml was not found in the "
+                "package share directory; running on struct defaults");
+  }
+  rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;
 }

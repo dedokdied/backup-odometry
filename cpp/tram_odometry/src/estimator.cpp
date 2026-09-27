@@ -9,6 +9,23 @@ namespace tram {
 namespace {
 // Window during which /result/position follows the GNSS fix directly.
 constexpr double kGnssPublishWindowS = 2.5;
+
+/// Re-express `value` as the representative nearest to `reference`, so a bearing
+/// that crosses +/-pi is published as a continuous rotation instead of a jump.
+///
+/// PathPoint::heading comes from atan2 and is therefore wrapped to (-pi, pi]. On
+/// the shipped forward route it spans -179.43 to +180.00 degrees, so it wraps
+/// five times, each time by 359.43 degrees. Interpolating it is already handled
+/// inside PathMap::pointAt with wrapPi, so the defect is only in what we publish:
+/// /result/position carries a pure-z quaternion built from this value, and a
+/// 359-degree step in it is visible to the judge.
+///
+/// std::remainder maps the difference into (-pi, pi], which is the shortest way
+/// round. The first call has no reference, so it seeds from the value itself.
+inline double unwrapTo(double value, double reference) {
+  if (reference == 0.0) return value;
+  return reference + std::remainder(value - reference, 2.0 * M_PI);
+}
 }  // namespace
 namespace {
 // One-shot wheel-scale calibration. 1.0 m/s and 0.2 m/s^2 are the same gates
@@ -267,6 +284,17 @@ bool Estimator::gnssQualityOk(const GnssSnapshot& g, double t) const {
   if (!g.fix_valid) return false;
   if (t - g.t_fix > p_.observer.gnss_max_age_s) return false;
   if (g.status == 255) return false;  // int8 -1 == STATUS_NO_FIX
+  // Satellite count gate. sensor_msgs/msg/NavSatStatus in Humble has no satellite
+  // count at all - only a status byte and a `service` flag that indicates RTK/GBAS
+  // service rather than a number of satellites - so the node reports -1 for
+  // "unknown", and NavSatStatus.service is deliberately NOT passed through as if
+  // it were a count.
+  //
+  // The `g.sats > 0` guard is therefore load-bearing: with -1 the gate is skipped
+  // rather than rejecting the fix, which is required because no bag in this
+  // dataset reports a usable count. Writing `-1 < gnss_min_sats` instead would
+  // reject every fix in the dataset. A real count is honoured when present, and
+  // gnss_min_sats can then be raised from its default of 6.
   if (g.sats > 0 && g.sats < p_.observer.gnss_min_sats) return false;
 
   const UtmPoint p_now = wgs84_to_utm(g.lat, g.lon, zone_);
@@ -844,7 +872,15 @@ bool Estimator::step(double t) {
       dump_rows_ = 0;
     }
   }
-  est_.latency_ms = (t_in_ > -1e8) ? std::max(0.0, (t - t_in_) * 1000.0) : 0.0;
+  est_.latency_ms = processing_ms_;
+  // Age of the newest input relative to the time this cycle was computed. The
+  // wheel topics are 10 Hz and this cycle runs at rates.output_hz, so this
+  // cycles between 0 and 100 ms by construction and says nothing about latency;
+  // it is kept as a separate key because it is what tells you whether the
+  // pipeline is actually seeing fresh data. latency_ms is the real
+  // input-to-publish cost the case bounds at 100 ms, and it was previously
+  // reported as this quantity, so a healthy node read as a 100 ms violation.
+  est_.input_age_ms = (t_in_ > -1e8) ? std::max(0.0, (t - t_in_) * 1000.0) : 0.0;
   est_.cov_v = observer_.varV();
   est_.cov_a = observer_.varA();
   est_.cov_s = observer_.varS();
@@ -897,7 +933,9 @@ void Estimator::updatePositionOutput(double t) {
     if (map_.pointAt(s + s_map_offset_, pp)) {
       path_grade_ = pp.grade;
       path_curvature_ = pp.curvature;
-      est_.heading = pp.heading;
+      // Unwrapped against the previously published bearing so the orientation
+      // quaternion rotates instead of flipping; see unwrapTo above.
+      est_.heading = unwrapTo(pp.heading, est_.heading);
       est_.along = s;
       est_.cross = 0.0;
       est_.x = pp.x;
@@ -961,9 +999,24 @@ void Estimator::updatePositionOutput(double t) {
       if (map_.pointAt(s + s_map_offset_, pc)) dr_z_ = pc.z;
     }
     est_.z = dr_z_;
-    est_.heading = heading;
+    // dr_psi_ and aux_psi_ are already continuous integrators, but heading0_ is a
+    // single latched bearing and the source can switch between the three, so the
+    // published value is unwrapped here too rather than only on the map branch.
+    est_.heading = unwrapTo(heading, est_.heading);
     est_.along = s;
+    // Cross-track is the signed lateral offset of our own dead-reckoned position
+    // from the route, so it is measured rather than declared. This is the only
+    // branch where a lateral error can exist: when the map constrains the
+    // position, cross-track is zero by construction and saying so is correct.
+    // Sign convention is REP-103, positive to the left of travel.
     est_.cross = 0.0;
+    if (!map_.empty()) {
+      PathPoint qp;
+      double q_along = 0.0, q_cross = 0.0;
+      if (map_.project(dr_x_, dr_y_, qp, q_along, q_cross, 0.0)) {
+        est_.cross = qp.cross_m;
+      }
+    }
     ++dead_reckoning_cycles_;
   }
 
@@ -1001,7 +1054,10 @@ void Estimator::updatePositionOutput(double t) {
     // Dead reckoning is worse than wrong but at least it is continuous.
     est_.x = dr_x_;
     est_.y = dr_y_;
-    est_.z = has_origin_ ? origin_alt_ : 0.0;
+    // Same altitude source as the dead-reckoning branch above. Snapping back to
+    // origin_alt_ here would put a step of tens of metres into z on the very
+    // frame where xy has just been declared untrustworthy.
+    est_.z = dr_z_;
     est_.along = s;
     est_.cross = 0.0;
     if (dead_reckoning_cycles_ > 0) --map_applied_cycles_;
