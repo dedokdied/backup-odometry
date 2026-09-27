@@ -196,6 +196,37 @@ class Estimator {
   // --- wheel-scale calibration on accumulated travel -------------------------
   // See the block in estimator.cpp for why the 2.5 s init window cannot work:
   // the run starts from a standstill, so |v_wheel| is 0 while the window is open.
+  // --- route map: deferred load, direction resolved from travel ------------
+  // The map is not loaded at construction. The judge localisation is ~500 m off
+  // the route for the first 220 s, so the run must be blind until the odometry
+  // has actually travelled far enough to tell which way along the route it is
+  // going. Direction comes from the sign of the UTM easting change, measured
+  // between the first fix and the moment min_travel_m has accumulated.
+  std::string map_file_fwd_, map_file_rev_;
+  double travel_accum_m_ = 0.0;
+  bool map_dir_resolved_ = false;
+  bool map_has_candidates_ = false;
+  double dir_ref_easting_ = 0.0;
+  bool dir_ref_valid_ = false;
+
+  // --- hybrid start --------------------------------------------------------
+  // For the first GNSS_PUBLISH_WINDOW_S seconds the published position comes
+  // straight from the GNSS fix, expressed in the judge frame as UTM minus the
+  // UTM of the first fix. It has to: the judge localisation sits ~500 m off the
+  // route for the first 220 s of the run, so there is nothing trustworthy to
+  // match in that window, and the map cannot be applied before the odometry has
+  // shown which way the tram is travelling.
+  UtmPoint last_fix_utm_;
+  double last_fix_t_ = 0.0;
+  uint64_t gnss_fix_count_ = 0;
+  bool gnss_published_ = false;
+
+ public:
+  bool mapDirResolved() const { return map_dir_resolved_; }
+  double travelAccumM() const { return travel_accum_m_; }
+  uint64_t gnssFixCount() const { return gnss_fix_count_; }
+  bool gnssPublished() const { return gnss_published_; }
+
   double scale_cal_travelled_ = 0.0;
   std::vector<double> scale_cal_samples_;
   std::vector<double> scale_cal_wheels_;

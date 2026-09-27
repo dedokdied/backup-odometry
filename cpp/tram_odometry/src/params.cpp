@@ -179,6 +179,9 @@ Params declare_params(rclcpp::Node& node) {
   // --- path map ------------------------------------------------------------
   load(node, "path_map.enable", p.path_map.enable);
   load(node, "path_map.file", p.path_map.file);
+  load(node, "path_map.file_fwd", p.path_map.file_fwd);
+  load(node, "path_map.file_rev", p.path_map.file_rev);
+  load(node, "path_map.min_travel_m", p.path_map.min_travel_m);
   load(node, "path_map.frame_convention", p.path_map.frame_convention);
   load(node, "path_map.search_radius_m", p.path_map.search_radius_m);
   load(node, "path_map.max_projection_error_m", p.path_map.max_projection_error_m);

@@ -144,6 +144,15 @@ struct MlParams {
 struct PathMapParams {
   bool enable = true;
   std::string file;
+  // Two directions of the same route, in the judge map frame. The direction
+  // is picked from the sign of dx/dt once min_travel_m of odometry travel has
+  // accumulated: the judge localisation is still 500 m off the route for the
+  // first 220 s, so its own coordinates cannot be used to choose.
+  std::string file_fwd;
+  std::string file_rev;
+  // Odometry travel before the map may constrain the position. Below that the
+  // estimator runs blind rather than snapping to a map it cannot yet follow.
+  double min_travel_m = 200.0;
   std::string frame_convention = "utm";
   double search_radius_m = 25.0;
   double max_projection_error_m = 8.0;

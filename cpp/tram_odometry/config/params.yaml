@@ -46,7 +46,12 @@ tram_odometry:
       origin_lon: 0.0
       origin_alt: 0.0
       xy_relative: true            # вычитать начало из плоских координат
-      z_relative: true             # вычитать начало из высоты
+      z_relative: false
+# ABSOLUTE altitude, matching the judge. The reference
+# /localization/kinematic_state has z = 144.763..173.650 m and
+# the route JSON they ship gives the same range to the
+# millimetre, so the datum is shared. With this true we would
+# publish 0..28.9 and carry a constant ~145 m into the 3D norm.
       publish_enu_twist: true     # доп. топик с оценкой боковой скорости и рыскания
 
     # ---------------------------------------------------------------------- GNSS
@@ -194,7 +199,10 @@ tram_odometry:
     # ------------------------------------------------------------- pathgraph / карта
     path_map:
       enable: true
-      file: "artifacts/route/route_map.csv"  # 4710 точек, UTM 37N
+      file: "artifacts/route/route_map_fwd.csv"
+      file_fwd: "artifacts/route/route_map_fwd.csv"   # x decreasing
+      file_rev: "artifacts/route/route_map_rev.csv"   # x increasing
+      min_travel_m: 200.0                            # odometry travel before the map applies
       frame_convention: "utm"    # utm | enu
       search_radius_m: 25.0
       max_projection_error_m: 8.0

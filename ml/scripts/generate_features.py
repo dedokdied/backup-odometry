@@ -45,6 +45,25 @@ VELOCITY_CUTOFF_HZ = 8.0
 WHEEL_RADIUS_M = 0.30
 
 
+# GNSS may be used for initial alignment only. The judging rule is a 2.5 s
+# window; everything after it is dropped from the dump, and a bag that carries
+# no GNSS at all gets NaN throughout.
+GNSS_EXPORT_WINDOW_S = 2.5
+
+#: exported name -> name bag_reader produces
+GNSS_EXPORT_COLUMNS = (
+    ("gnss_master_lat", "master_fix_lat"),
+    ("gnss_master_lon", "master_fix_lon"),
+    ("gnss_master_alt", "master_fix_alt"),
+    ("gnss_rover_lat", "rover_fix_lat"),
+    ("gnss_rover_lon", "rover_fix_lon"),
+    ("gnss_rover_alt", "rover_fix_alt"),
+    ("gnss_master_vel_x", "master_vel_x"),
+    ("gnss_master_vel_y", "master_vel_y"),
+    ("gnss_rover_vel_x", "rover_vel_x"),
+    ("gnss_rover_vel_y", "rover_vel_y"),
+)
+
 GNSS_MAX_AGE_S = 0.35
 GNSS_MIN_SATS = 6
 GNSS_INIT_WINDOW_S = 2.5
@@ -206,6 +225,17 @@ def process_bag(bag_dir: Path, hz: float = 50.0) -> pd.DataFrame:
     out["scale_cal_v_ref"] = 0.0 if cal_result is None else cal_result[0]
     out["scale_cal_v_wheel"] = 0.0 if cal_result is None else cal_result[1]
     out["scale_cal_ratio"] = 0.0 if cal_result is None else cal_result[2]
+
+    # GNSS export, restricted to the alignment window. The features themselves
+    # never read these columns; they exist so the C++ harness can drive
+    # Estimator::step the way the runtime does, not so the model can see GNSS.
+    t_first = float(df["t"].iloc[0])
+    within = (df["t"].to_numpy() - t_first) < GNSS_EXPORT_WINDOW_S
+    for col, src in GNSS_EXPORT_COLUMNS:
+        if src in df.columns:
+            out[col] = np.where(within, df[src].to_numpy(dtype=np.float64), np.nan)
+        else:
+            out[col] = np.full(len(df), np.nan)
     out["b_scale_final"] = b_scale_track
     return out
 

@@ -7,6 +7,10 @@
 
 namespace tram {
 namespace {
+// Window during which /result/position follows the GNSS fix directly.
+constexpr double kGnssPublishWindowS = 2.5;
+}  // namespace
+namespace {
 // One-shot wheel-scale calibration. 1.0 m/s and 0.2 m/s^2 are the same gates
 // calibrateScaleFromVelocity and adaptFriction already use; the window is 5 s.
 constexpr double kScaleCalMinSpeed = 1.0;
@@ -75,7 +79,19 @@ Estimator::Estimator(const Params& params, const std::string& ml_model_dir)
     origin_from_config_ = true;
   }
 
-  if (p_.path_map.enable && !p_.path_map.file.empty()) loadPathMap(p_.path_map.file);
+  // The route map is loaded later, once the odometry has travelled
+  // min_travel_m and the direction of travel is known. Loading it here would pin
+  // the position to the wrong end of the route on half the recordings.
+  map_file_fwd_ = p_.path_map.file_fwd.empty() ? p_.path_map.file : p_.path_map.file_fwd;
+  map_file_rev_ = p_.path_map.file_rev;
+  map_has_candidates_ = p_.path_map.enable && !map_file_fwd_.empty();
+  map_dir_resolved_ = false;
+  dir_ref_valid_ = false;
+  travel_accum_m_ = 0.0;
+  if (p_.path_map.enable && map_file_rev_.empty() && !map_file_fwd_.empty()) {
+    // A single file: no direction to choose, use it as soon as travel allows.
+    map_file_rev_ = map_file_fwd_;
+  }
 
   // The learned corrector is optional: with ml.enable=false or an empty
   // ml_model_dir the pipeline is pure physics and nothing else changes.
@@ -327,6 +343,10 @@ bool Estimator::tryInitialise(double t) {
   // first fix a few cycles in, and the very first step() always runs before any
   // callback has fired, so bailing out on initialised_ would silently downgrade
   // the whole run to relative odometry even when a fix does arrive later.
+  if (gnss_ok) {
+    ++gnss_fix_count_;
+  }
+
   if (gnss_ok && !has_origin_) {
     origin_lat_ = g.lat;
     origin_lon_ = g.lon;
@@ -364,6 +384,27 @@ bool Estimator::tryInitialise(double t) {
 
   if (gnss_ok && has_origin_) {
     const UtmPoint p_now = wgs84_to_utm(g.lat, g.lon, zone_);
+    last_fix_utm_ = p_now;
+    last_fix_t_ = g.t_fix;
+
+    // --- route map: resolve direction once enough odometry travel has accrued.
+    // Sign of the easting change between the first fix and now decides which of
+    // the two files describes this run. Measuring a displacement rather than the
+    // absolute position of the first fix keeps it correct when the run starts
+    // mid-route, and it uses the map frame's own axis so no frame conversion is
+    // needed here.
+    if (map_has_candidates_ && !map_dir_resolved_) {
+      if (!dir_ref_valid_ && p_now.valid) {
+        dir_ref_easting_ = p_now.easting;
+        dir_ref_valid_ = true;
+      } else if (dir_ref_valid_ && travel_accum_m_ >= p_.path_map.min_travel_m) {
+        const double dx = p_now.easting - dir_ref_easting_;
+        // fwd is stored with easting decreasing, rev with easting increasing.
+        const bool fwd = (dx < 0.0);
+        loadPathMap(fwd ? map_file_fwd_ : map_file_rev_);
+        map_dir_resolved_ = true;
+      }
+    }
     now_e = p_now.easting;
     now_n = p_now.northing;
 
@@ -476,6 +517,7 @@ bool Estimator::step(double t) {
 
   const double v_wheel_mean =
       0.5 * ((front_valid ? front_.v : 0.0) + (rear_valid ? rear_.v : 0.0));
+  travel_accum_m_ += std::fabs(v_wheel_mean) * dt;
   const double a_wheel_mean = 0.5 * ((front_valid ? front_.a : 0.0) + (rear_valid ? rear_.a : 0.0));
   if (!scale_cal_done_) scale_cal_travelled_ += std::fabs(v_wheel_mean) * dt;
   const double omega_f = front_valid ? front_.v / p_.vehicle.wheel_radius_m : 0.0;
@@ -663,6 +705,20 @@ bool Estimator::step(double t) {
 
   // -------------------------------------------------------- 7. position out
   updatePositionOutput(t);
+
+  // Hybrid start, applied after the position output so it is not overwritten.
+  // Judge frame = UTM of the current fix minus UTM of the first fix. Using the
+  // per-recording first fix is what makes this work for any starting point; a
+  // constant offset cannot, because it is the UTM of whichever end the tram
+  // started from.
+  if (has_origin_ && origin_utm_.valid && last_fix_utm_.valid &&
+      (last_fix_t_ - init_t0_) <= kGnssPublishWindowS) {
+    est_.x = last_fix_utm_.easting - origin_utm_.easting;
+    est_.y = last_fix_utm_.northing - origin_utm_.northing;
+    if (std::isfinite(gnss_.alt)) est_.z = gnss_.alt;
+    est_.s = 0.0;
+    gnss_published_ = true;
+  }
 
   // ------------------------------------------------------------- 8. publish
   est_.v = observer_.v();

@@ -326,6 +326,18 @@ class OdometryNode : public rclcpp::Node {
     add("odometry_trust", buf);
     std::snprintf(buf, sizeof(buf), "%.3f", e.slip_index);
     add("slip_index", buf);
+    // Route-map state. dir_resolved=false at the end of a run means the map was
+    // never applied and the whole trajectory was dead reckoned; without this key
+    // that failure is silent, because everything downstream still looks healthy.
+    std::snprintf(buf, sizeof(buf), "%d", est_->mapDirResolved() ? 1 : 0);
+    add("map_dir_resolved", buf);
+    std::snprintf(buf, sizeof(buf), "%.1f m", est_->travelAccumM());
+    add("travel_accum_m", buf);
+    std::snprintf(buf, sizeof(buf), "%llu",
+                  static_cast<unsigned long long>(est_->gnssFixCount()));
+    add("gnss_fixes_seen", buf);
+    std::snprintf(buf, sizeof(buf), "%d", est_->gnssPublished() ? 1 : 0);
+    add("gnss_published", buf);
     std::snprintf(buf, sizeof(buf), "%.3f", e.kappa_front);
     add("slip_front", buf);
     std::snprintf(buf, sizeof(buf), "%.3f", e.kappa_rear);
