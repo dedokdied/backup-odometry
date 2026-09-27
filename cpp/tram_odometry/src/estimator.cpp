@@ -373,6 +373,21 @@ void Estimator::adaptFriction(double trust, double slip_index, double demand, do
   mu_ = std::clamp(mu_, 0.05, p_.adhesion.mu_peak * 1.2);
 }
 
+// Refresh the most recent GNSS fix. This has to run on every cycle, not only
+// while tryInitialise() is still returning false: that function bails out at
+// `if (initialised_) return true` before it ever reached the assignment, so a
+// snapshot taken during initialisation stayed frozen for the rest of the run.
+// The frozen snapshot made the hybrid start window below read
+// (last_fix_t_ - init_t0_) == 0, i.e. permanently "inside the first 2.5 s", so
+// the published position was pinned to `first fix - origin` == (0, 0) forever.
+void Estimator::updateGnssSnapshot(const GnssSnapshot& g) {
+  if (!(g.fix_valid && sane_latlon(g.lat, g.lon))) return;
+  const UtmPoint p = wgs84_to_utm(g.lat, g.lon, zone_);
+  if (!p.valid) return;
+  last_fix_utm_ = p;
+  last_fix_t_ = g.t_fix;
+}
+
 bool Estimator::tryInitialise(double t) {
   const GnssSnapshot& g = gnss_;
   const bool gnss_ok = g.fix_valid && sane_latlon(g.lat, g.lon);
@@ -423,8 +438,9 @@ bool Estimator::tryInitialise(double t) {
 
   if (gnss_ok && has_origin_) {
     const UtmPoint p_now = wgs84_to_utm(g.lat, g.lon, zone_);
-    last_fix_utm_ = p_now;
-    last_fix_t_ = g.t_fix;
+    // The snapshot is a per-cycle quantity now; refresh it here too so the very
+    // first pass is already correct. See updateGnssSnapshot().
+    updateGnssSnapshot(g);
 
     // --- route map: resolve direction once enough odometry travel has accrued.
     // Sign of the easting change between the first fix and now decides which of
@@ -538,6 +554,13 @@ bool Estimator::step(double t) {
   if (!tryInitialise(t)) {
     processing_ms_ = 0.0;
     return false;
+  }
+
+  // After tryInitialise(), because that is what fixes zone_ on the first fix.
+  // From here on the snapshot is refreshed every cycle regardless of initialised_.
+  {
+    const GnssSnapshot g_snap = gnss_;
+    updateGnssSnapshot(g_snap);
   }
 
   double dt = (last_t_ > -1e8) ? t - last_t_ : 1.0 / std::max(1.0, p_.rates.output_hz);
@@ -761,7 +784,7 @@ bool Estimator::step(double t) {
   // constant offset cannot, because it is the UTM of whichever end the tram
   // started from.
   if (has_origin_ && origin_utm_.valid && last_fix_utm_.valid &&
-      (last_fix_t_ - init_t0_) <= kGnssPublishWindowS) {
+      (t - init_t0_) <= kGnssPublishWindowS) {
     // A GNSS-minus-GNSS difference, so it is frame independent and needs no map
     // frame offset. The range check is kept anyway: this is the frame the judge
     // sees first, so it is the one place a bad origin would be visible.
