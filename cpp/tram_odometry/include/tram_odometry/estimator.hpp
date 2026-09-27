@@ -101,6 +101,7 @@ class Estimator {
   void updateWheel(WheelSlot& slot, double t, double value_kmh);
   bool tryInitialise(double t);
   void updateGnssSnapshot(const GnssSnapshot& g);
+  void tryLoadPathMap(double t);
   bool gnssQualityOk(const GnssSnapshot& g, double t) const;
   void accumulateReference(double t, const GnssSnapshot& g);
   void updatePositionOutput(double t);

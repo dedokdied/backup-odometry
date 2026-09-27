@@ -388,6 +388,73 @@ void Estimator::updateGnssSnapshot(const GnssSnapshot& g) {
   last_fix_t_ = g.t_fix;
 }
 
+// Route map and heading bootstrap, run once per cycle from step().
+//
+// This used to live inside tryInitialise(), below its `if (initialised_) return
+// true` guard, which made it unreachable after the very first cycle. The circular
+// consequence was that the map could never load: resolving the direction needs
+// travel_accum_m_ >= min_travel_m, and travel_accum_m_ only starts accumulating
+// once the filter is out of initialisation. The heading anchor (s_map_offset_)
+// lived in the same dead block, so even a loaded map would have stayed unusable,
+// because mapUsable() requires s_map_offset_valid_.
+void Estimator::tryLoadPathMap(double t) {
+  (void)t;
+  const GnssSnapshot& g = gnss_;
+  if (!(g.fix_valid && sane_latlon(g.lat, g.lon))) return;
+  if (!has_origin_ || !origin_utm_.valid) return;
+  const UtmPoint p_now = wgs84_to_utm(g.lat, g.lon, zone_);
+  if (!p_now.valid) return;
+
+  // --- direction: sign of the easting change between the first fix and now.
+  // Measuring a displacement rather than the absolute position of the first fix
+  // keeps it correct when the run starts mid-route, and it uses the map frame's
+  // own axis so no frame conversion is needed here.
+  if (map_has_candidates_ && !map_dir_resolved_) {
+    if (!dir_ref_valid_) {
+      dir_ref_easting_ = p_now.easting;
+      dir_ref_valid_ = true;
+    } else if (travel_accum_m_ >= p_.path_map.min_travel_m) {
+      const double dx = p_now.easting - dir_ref_easting_;
+      // fwd is stored with easting decreasing, rev with easting increasing.
+      const bool fwd = (dx < 0.0);
+      loadPathMap(fwd ? map_file_fwd_ : map_file_rev_);
+      map_dir_resolved_ = true;
+    }
+  }
+
+  // --- heading of the route: from the map if we have one, otherwise from the
+  // GNSS displacement since the origin.
+  if (!map_.empty()) {
+    PathPoint pp;
+    double along = 0.0, cross = 0.0;
+    double mx = 0.0, my = 0.0;
+    utmToMap(p_now.easting, p_now.northing, mx, my);
+    if (map_.project(mx, my, pp, along, cross,
+                     std::max(p_.path_map.search_radius_m, 50.0)) &&
+        std::fabs(pp.cross_m) <= p_.path_map.max_projection_error_m) {
+      heading0_ = pp.heading;
+      heading0_valid_ = true;
+      heading_reference_ = true;   // the map bearing is anchored on a GNSS fix
+      s_map_offset_ = along;
+      s_map_offset_valid_ = true;
+    }
+    // Deliberately no else: the judge localisation is ~500 m off the route for
+    // the first 220 s of a run, so a rejected projection must leave the anchor
+    // invalid rather than anchor against the wrong part of the corridor. An
+    // invalid anchor is what makes updatePositionOutput fall back to dead
+    // reckoning instead of publishing a point on the polyline.
+  }
+  if (!heading0_valid_) {
+    const double de = p_now.easting - origin_utm_.easting;
+    const double dn = p_now.northing - origin_utm_.northing;
+    if (std::hypot(de, dn) > 5.0) {
+      heading0_ = std::atan2(dn, de);
+      heading0_valid_ = true;
+      heading_reference_ = true;   // a GNSS displacement is an absolute bearing
+    }
+  }
+}
+
 bool Estimator::tryInitialise(double t) {
   const GnssSnapshot& g = gnss_;
   const bool gnss_ok = g.fix_valid && sane_latlon(g.lat, g.lon);
@@ -441,59 +508,8 @@ bool Estimator::tryInitialise(double t) {
     // The snapshot is a per-cycle quantity now; refresh it here too so the very
     // first pass is already correct. See updateGnssSnapshot().
     updateGnssSnapshot(g);
-
-    // --- route map: resolve direction once enough odometry travel has accrued.
-    // Sign of the easting change between the first fix and now decides which of
-    // the two files describes this run. Measuring a displacement rather than the
-    // absolute position of the first fix keeps it correct when the run starts
-    // mid-route, and it uses the map frame's own axis so no frame conversion is
-    // needed here.
-    if (map_has_candidates_ && !map_dir_resolved_) {
-      if (!dir_ref_valid_ && p_now.valid) {
-        dir_ref_easting_ = p_now.easting;
-        dir_ref_valid_ = true;
-      } else if (dir_ref_valid_ && travel_accum_m_ >= p_.path_map.min_travel_m) {
-        const double dx = p_now.easting - dir_ref_easting_;
-        // fwd is stored with easting decreasing, rev with easting increasing.
-        const bool fwd = (dx < 0.0);
-        loadPathMap(fwd ? map_file_fwd_ : map_file_rev_);
-        map_dir_resolved_ = true;
-      }
-    }
     now_e = p_now.easting;
     now_n = p_now.northing;
-
-    // Heading of the route: from the map if we have one, otherwise from the GNSS
-    // displacement since the origin.
-    if (!map_.empty()) {
-      PathPoint pp;
-      double along = 0.0, cross = 0.0;
-      double mx = 0.0, my = 0.0;
-      utmToMap(p_now.easting, p_now.northing, mx, my);
-      if (map_.project(mx, my, pp, along, cross,
-                       std::max(p_.path_map.search_radius_m, 50.0)) &&
-          std::fabs(pp.cross_m) <= p_.path_map.max_projection_error_m) {
-        heading0_ = pp.heading;
-        heading0_valid_ = true;
-        heading_reference_ = true;   // the map bearing is anchored on a GNSS fix
-        s_map_offset_ = along;
-        s_map_offset_valid_ = true;
-      }
-      // Deliberately no else: the judge localisation is ~500 m off the route for
-      // the first 220 s of a run, so a rejected projection must leave the anchor
-      // invalid rather than anchor against the wrong part of the corridor. An
-      // invalid anchor is what makes updatePositionOutput fall back to dead
-      // reckoning instead of publishing a point on the polyline.
-    }
-    if (!heading0_valid_) {
-      const double de = p_now.easting - origin_utm_.easting;
-      const double dn = p_now.northing - origin_utm_.northing;
-      if (std::hypot(de, dn) > 5.0) {
-        heading0_ = std::atan2(dn, de);
-        heading0_valid_ = true;
-        heading_reference_ = true;   // a GNSS displacement is an absolute bearing
-      }
-    }
   }
 
   // Initial speed: GNSS if it is sane, otherwise the wheel odometry. Plenty of
@@ -516,6 +532,11 @@ bool Estimator::tryInitialise(double t) {
   s_odo_raw_ = 0.0;
   dr_x_ = 0.0;
   dr_y_ = 0.0;
+  // Altitude fallback until the map can supply one. dr_z_ is otherwise only ever
+  // written from the map, so with no map the published z stayed at 0 for the
+  // whole run; the origin altitude is a far better placeholder and it shares the
+  // judge's datum (both in the 144..174 m band on this route).
+  dr_z_ = origin_alt_;
   gnss_prev_e_ = now_e;
   gnss_prev_n_ = now_n;
   gnss_prev_t_ = t;
@@ -562,6 +583,11 @@ bool Estimator::step(double t) {
     const GnssSnapshot g_snap = gnss_;
     updateGnssSnapshot(g_snap);
   }
+
+  // The route map and the heading anchor cannot be bootstrapped from
+  // tryInitialise(): both need odometry travel, which only exists after the
+  // filter has left initialisation. See tryLoadPathMap().
+  tryLoadPathMap(t);
 
   double dt = (last_t_ > -1e8) ? t - last_t_ : 1.0 / std::max(1.0, p_.rates.output_hz);
   if (!(dt > 1e-4)) dt = 1.0 / std::max(1.0, p_.rates.output_hz);
