@@ -396,6 +396,22 @@ class OdometryNode : public rclcpp::Node {
     add("map_frame_offset_n", buf);
     std::snprintf(buf, sizeof(buf), "%d", est_->positionOutOfRange() ? 1 : 0);
     add("position_out_of_range", buf);
+    // Why the anchor is not being taken. These separate the candidate causes
+    // that all present identically as map_anchor_valid=0.
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSkipNoFix());
+    add("anchor_skip_no_fix", buf);
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSkipNoOrigin());
+    add("anchor_skip_no_origin", buf);
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSkipUtm());
+    add("anchor_skip_utm", buf);
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSkipNoMap());
+    add("anchor_skip_no_map", buf);
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSkipProject());
+    add("anchor_skip_project", buf);
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSkipCross());
+    add("anchor_skip_cross", buf);
+    std::snprintf(buf, sizeof(buf), "%zu", est_->anchorSet());
+    add("anchor_set", buf);
     std::snprintf(buf, sizeof(buf), "%llu",
                   static_cast<unsigned long long>(est_->positionOutOfRangeCount()));
     add("position_out_of_range_count", buf);

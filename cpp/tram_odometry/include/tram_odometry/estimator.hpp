@@ -103,6 +103,18 @@ class Estimator {
   void updateGnssSnapshot(const GnssSnapshot& g);
   void tryLoadPathMap(double t);
 
+  /// Why the map anchor is not being taken. Measured against the reference
+  /// trajectory, 80 % of on-route samples lie within 4.4 m of the polyline and
+  /// 96 % within 8 m, so max_projection_error_m is not what is rejecting them;
+  /// these counters say what is.
+  size_t anchor_skip_no_fix_ = 0;      ///< GNSS fix invalid or lon/lat implausible
+  size_t anchor_skip_no_origin_ = 0;   ///< no geodetic origin yet
+  size_t anchor_skip_utm_ = 0;         ///< wgs84_to_utm returned an invalid point
+  size_t anchor_skip_no_map_ = 0;      ///< map empty
+  size_t anchor_skip_project_ = 0;     ///< project() found nothing within the radius
+  size_t anchor_skip_cross_ = 0;       ///< projection ok but cross_m too large
+  size_t anchor_set_ = 0;              ///< anchor actually taken
+
   /// Same as loadPathMap() but without taking mtx_. Only for call paths that
   /// already hold it, i.e. everything reached from step().
   bool loadPathMapLocked(const std::string& file);
@@ -295,6 +307,13 @@ class Estimator {
   bool gnssPublished() const { return gnss_published_; }
   bool mapAnchorValid() const { return s_map_offset_valid_; }
   double mapAnchorM() const { return s_map_offset_; }
+  size_t anchorSkipNoFix() const { return anchor_skip_no_fix_; }
+  size_t anchorSkipNoOrigin() const { return anchor_skip_no_origin_; }
+  size_t anchorSkipUtm() const { return anchor_skip_utm_; }
+  size_t anchorSkipNoMap() const { return anchor_skip_no_map_; }
+  size_t anchorSkipProject() const { return anchor_skip_project_; }
+  size_t anchorSkipCross() const { return anchor_skip_cross_; }
+  size_t anchorSet() const { return anchor_set_; }
   /// True once a frame mix-up has been detected in the published position. It is
   /// a hard failure of criterion 2, so it is surfaced in /result/diagnostics
   /// rather than left to be discovered in the logs.

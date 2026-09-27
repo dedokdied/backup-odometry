@@ -410,10 +410,10 @@ void Estimator::updateGnssSnapshot(const GnssSnapshot& g) {
 void Estimator::tryLoadPathMap(double t) {
   (void)t;
   const GnssSnapshot& g = gnss_;
-  if (!(g.fix_valid && sane_latlon(g.lat, g.lon))) return;
-  if (!has_origin_ || !origin_utm_.valid) return;
+  if (!(g.fix_valid && sane_latlon(g.lat, g.lon))) { ++anchor_skip_no_fix_; return; }
+  if (!has_origin_ || !origin_utm_.valid) { ++anchor_skip_no_origin_; return; }
   const UtmPoint p_now = wgs84_to_utm(g.lat, g.lon, zone_);
-  if (!p_now.valid) return;
+  if (!p_now.valid) { ++anchor_skip_utm_; return; }
 
   // --- direction: sign of the easting change between the first fix and now.
   // Measuring a displacement rather than the absolute position of the first fix
@@ -439,20 +439,26 @@ void Estimator::tryLoadPathMap(double t) {
     double along = 0.0, cross = 0.0;
     double mx = 0.0, my = 0.0;
     utmToMap(p_now.easting, p_now.northing, mx, my);
-    if (map_.project(mx, my, pp, along, cross,
-                     std::max(p_.path_map.search_radius_m, 50.0)) &&
-        std::fabs(pp.cross_m) <= p_.path_map.max_projection_error_m) {
+    if (!map_.project(mx, my, pp, along, cross,
+                      std::max(p_.path_map.search_radius_m, 50.0))) {
+      ++anchor_skip_project_;
+    } else if (std::fabs(pp.cross_m) > p_.path_map.max_projection_error_m) {
+      ++anchor_skip_cross_;
+    } else {
       heading0_ = pp.heading;
       heading0_valid_ = true;
       heading_reference_ = true;   // the map bearing is anchored on a GNSS fix
       s_map_offset_ = along;
       s_map_offset_valid_ = true;
+      ++anchor_set_;
     }
     // Deliberately no else: the judge localisation is ~500 m off the route for
     // the first 220 s of a run, so a rejected projection must leave the anchor
     // invalid rather than anchor against the wrong part of the corridor. An
     // invalid anchor is what makes updatePositionOutput fall back to dead
     // reckoning instead of publishing a point on the polyline.
+  } else {
+    ++anchor_skip_no_map_;
   }
   if (!heading0_valid_) {
     const double de = p_now.easting - origin_utm_.easting;
