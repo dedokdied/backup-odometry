@@ -82,8 +82,14 @@ Estimator::Estimator(const Params& params, const std::string& ml_model_dir)
   // The route map is loaded later, once the odometry has travelled
   // min_travel_m and the direction of travel is known. Loading it here would pin
   // the position to the wrong end of the route on half the recordings.
-  map_file_fwd_ = p_.path_map.file_fwd.empty() ? p_.path_map.file : p_.path_map.file_fwd;
-  map_file_rev_ = p_.path_map.file_rev;
+  //
+  // Paths are resolved through resolve_asset, not taken verbatim: a relative
+  // "artifacts/route/..." only exists when the process happens to be started from
+  // the repository root, and the map being silently absent is indistinguishable
+  // from a map that was never needed.
+  map_file_fwd_ = resolve_asset(p_.path_map.file_fwd.empty() ? p_.path_map.file
+                                                             : p_.path_map.file_fwd);
+  map_file_rev_ = resolve_asset(p_.path_map.file_rev);
   map_has_candidates_ = p_.path_map.enable && !map_file_fwd_.empty();
   map_dir_resolved_ = false;
   dir_ref_valid_ = false;
@@ -294,9 +300,14 @@ bool Estimator::referencePathDistance(const UtmPoint& p, double& s_ref) const {
     return heading0_valid_;
   }
   if (!s_map_offset_valid_) return false;
+  // The map lives in its own frame; the fix arrives in UTM. A displacement
+  // (easting - origin.easting) is frame independent, but an absolute
+  // projection is not, so the conversion has to happen here.
+  double mx = 0.0, my = 0.0;
+  utmToMap(p.easting, p.northing, mx, my);
   PathPoint pp;
   double along = 0.0, cross = 0.0;
-  if (!map_.project(p.easting, p.northing, pp, along, cross, p_.path_map.search_radius_m)) {
+  if (!map_.project(mx, my, pp, along, cross, p_.path_map.search_radius_m)) {
     return false;
   }
   s_ref = along - s_map_offset_;
@@ -413,13 +424,22 @@ bool Estimator::tryInitialise(double t) {
     if (!map_.empty()) {
       PathPoint pp;
       double along = 0.0, cross = 0.0;
-      if (map_.project(p_now.easting, p_now.northing, pp, along, cross,
-                       std::max(p_.path_map.search_radius_m, 50.0))) {
+      double mx = 0.0, my = 0.0;
+      utmToMap(p_now.easting, p_now.northing, mx, my);
+      if (map_.project(mx, my, pp, along, cross,
+                       std::max(p_.path_map.search_radius_m, 50.0)) &&
+          std::fabs(pp.cross_m) <= p_.path_map.max_projection_error_m) {
         heading0_ = pp.heading;
         heading0_valid_ = true;
+        heading_reference_ = true;   // the map bearing is anchored on a GNSS fix
         s_map_offset_ = along;
         s_map_offset_valid_ = true;
       }
+      // Deliberately no else: the judge localisation is ~500 m off the route for
+      // the first 220 s of a run, so a rejected projection must leave the anchor
+      // invalid rather than anchor against the wrong part of the corridor. An
+      // invalid anchor is what makes updatePositionOutput fall back to dead
+      // reckoning instead of publishing a point on the polyline.
     }
     if (!heading0_valid_) {
       const double de = p_now.easting - origin_utm_.easting;
@@ -427,6 +447,7 @@ bool Estimator::tryInitialise(double t) {
       if (std::hypot(de, dn) > 5.0) {
         heading0_ = std::atan2(dn, de);
         heading0_valid_ = true;
+        heading_reference_ = true;   // a GNSS displacement is an absolute bearing
       }
     }
   }
@@ -713,11 +734,24 @@ bool Estimator::step(double t) {
   // started from.
   if (has_origin_ && origin_utm_.valid && last_fix_utm_.valid &&
       (last_fix_t_ - init_t0_) <= kGnssPublishWindowS) {
-    est_.x = last_fix_utm_.easting - origin_utm_.easting;
-    est_.y = last_fix_utm_.northing - origin_utm_.northing;
-    if (std::isfinite(gnss_.alt)) est_.z = gnss_.alt;
-    est_.s = 0.0;
-    gnss_published_ = true;
+    // A GNSS-minus-GNSS difference, so it is frame independent and needs no map
+    // frame offset. The range check is kept anyway: this is the frame the judge
+    // sees first, so it is the one place a bad origin would be visible.
+    const double px = last_fix_utm_.easting - origin_utm_.easting;
+    const double py = last_fix_utm_.northing - origin_utm_.northing;
+    if (positionInRange(px, py)) {
+      est_.x = px;
+      est_.y = py;
+      if (std::isfinite(gnss_.alt)) est_.z = gnss_.alt;
+      gnss_published_ = true;
+      // Position comes straight from a fix in this window, so the heading that
+      // goes with it is referenced, not extrapolated.
+      heading_reference_ = true;
+    }
+    // est_.s is deliberately NOT zeroed here. It is taken from the filter two
+    // lines later, so zeroing it only created a discontinuity for anything that
+    // read the value in between; the position in this window comes from GNSS,
+    // which says nothing about distance travelled.
   }
 
   // ------------------------------------------------------------- 8. publish
@@ -814,7 +848,25 @@ bool Estimator::step(double t) {
   est_.cov_v = observer_.varV();
   est_.cov_a = observer_.varA();
   est_.cov_s = observer_.varS();
-  est_.cov_heading = hasOrigin() ? 0.01 : 1.0;
+  // Heading uncertainty. The heading is not one of the six filter states, so its
+  // covariance is integrated here rather than read out of P. It grows while the
+  // estimator coasts without an absolute bearing and resets when one arrives,
+  // which is the property ML_CONTRACT.md:229-236 asks C++ to demonstrate: a
+  // filter that keeps publishing a tight covariance while coasting looks
+  // identical to a healthy one in the logs and is judged wrong on the
+  // re-acquisition transient.
+  const double cov_floor = p_.observer.cov_heading_floor_rad2;
+  const double cov_ceiling = p_.observer.cov_heading_max_rad2;
+  if (heading_reference_) {
+    cov_heading_ = std::min(std::max(cov_heading_, cov_floor), cov_ceiling);
+    heading_blind_s_ = 0.0;
+  } else {
+    cov_heading_ += p_.observer.q_heading_rad2_s * dt;
+    if (cov_heading_ < cov_floor) cov_heading_ = cov_floor;
+    if (cov_heading_ > cov_ceiling) cov_heading_ = cov_ceiling;
+    heading_blind_s_ += dt;
+  }
+  est_.cov_heading = cov_heading_;
 
   last_t_ = t;
   const auto t_end = std::chrono::steady_clock::now();
@@ -825,13 +877,22 @@ bool Estimator::step(double t) {
 
 void Estimator::updatePositionOutput(double t) {
   const double s = observer_.s();
-  // Whether est_.x/est_.y currently hold absolute UTM metres (true) or a local
-  // dead-reckoned offset from the start point (false). The two must not be mixed:
-  // subtracting a UTM origin from a locally integrated offset is what produced a
-  // position around (-4.0e5, -6.2e6) instead of one near the origin.
+  // Whether est_.x/est_.y hold a position in the MAP frame (true, still to be
+  // shifted by the origin) or a local dead-reckoned offset from the start point
+  // (false, already final). The two must not be mixed. There are two distinct
+  // ways to get that wrong and both were live at some point:
+  //   - subtracting a UTM origin from a locally integrated offset (-4.0e5, -6.2e6);
+  //   - subtracting a UTM origin from a map that is in the judge frame, where
+  //     eastings are ~1.03e5 instead of ~4.04e5 (-3.0e5 m of constant error).
+  // mapOrigin() is the only correct origin for the map branch, and
+  // positionInRange() is the backstop for anything that slips through.
   bool coords_are_utm = false;
 
-  if (!map_.empty()) {
+  // The map may only constrain the position when its arc-length anchor is valid.
+  // observer_.s() is distance travelled since the run started; the map's s starts
+  // at the beginning of the route. Comparing the two without an anchor silently
+  // offsets the position along the route by wherever the run happened to start.
+  if (mapUsable()) {
     PathPoint pp;
     if (map_.pointAt(s + s_map_offset_, pp)) {
       path_grade_ = pp.grade;
@@ -843,21 +904,67 @@ void Estimator::updatePositionOutput(double t) {
       est_.y = pp.y;
       est_.z = pp.z;
       coords_are_utm = true;
+      ++map_applied_cycles_;
     }
-  } else {
-    // No map: dead reckoning along the initial heading, corrected in heading by
-    // the antenna baseline when the organisers provide it.
-    const double heading = heading0_valid_ ? (aux_yaw_valid_ ? aux_psi_ : heading0_) : 0.0;
+  }
+  if (!coords_are_utm) {
+    // Dead reckoning. The heading comes from one of three sources, in order of
+    // quality:
+    //
+    //  1. the route map, integrated as dpsi = kappa * v * dt. The map supplies
+    //     the SHAPE; the odometry supplies the distance. This is only done while
+    //     the arc-length anchor is valid, because otherwise the curvature is read
+    //     at the wrong place on the route and the shape is wrong too.
+    //  2. the antenna baseline, once the organisers provide the TF between the
+    //     two antennas.
+    //  3. the single bearing latched at initialisation, held constant.
+    //
+    // Case 3 is the honest fallback but it is expensive on this route: the map
+    // turns about 28 degrees over its 4.7 km, so holding the initial bearing puts
+    // the end of the trajectory sin(28 deg) * 4708 m = 2.2 km off to the side.
+    // That is why the lateral axis is reported as unobservable (covariance[7] is
+    // set to 1e6 by the node) rather than as a measurement.
     const double v = observer_.v();
     const double dt = std::clamp(t - (last_t_ > -1e8 ? last_t_ : t), 1e-3, 0.5);
+
+    double heading;
+    if (!map_.empty() && s_map_offset_valid_) {
+      // Re-anchor the dead-reckoned state onto the map the first time the anchor
+      // becomes usable, so the two branches do not jump when the handover happens.
+      if (!dr_seeded_) {
+        PathPoint p0;
+        if (map_.pointAt(s_map_offset_, p0)) {
+          dr_x_ = p0.x;
+          dr_y_ = p0.y;
+          dr_psi_ = p0.heading;
+          dr_z_ = p0.z;
+          dr_seeded_ = true;
+        }
+      }
+      // dpsi = kappa * ds with ds = v * dt.
+      dr_psi_ += path_curvature_ * v * dt;
+      heading = dr_psi_;
+    } else if (aux_yaw_valid_) {
+      heading = aux_psi_;
+    } else {
+      heading = heading0_valid_ ? heading0_ : 0.0;
+    }
     dr_x_ += v * std::cos(heading) * dt;
     dr_y_ += v * std::sin(heading) * dt;
     est_.x = dr_x_;
     est_.y = dr_y_;
-    est_.z = has_origin_ ? origin_alt_ : 0.0;
+    // Hold the last valid altitude rather than snapping to the origin's: the map
+    // and the judge reference share the datum (z 144.763..173.650 m on both), so
+    // a jump to origin_alt_ would be a visible step for no reason.
+    if (!map_.empty() && s_map_offset_valid_) {
+      PathPoint pc;
+      if (map_.pointAt(s + s_map_offset_, pc)) dr_z_ = pc.z;
+    }
+    est_.z = dr_z_;
     est_.heading = heading;
     est_.along = s;
     est_.cross = 0.0;
+    ++dead_reckoning_cycles_;
   }
 
   // Frame conversion for the published position.
@@ -868,25 +975,53 @@ void Estimator::updatePositionOutput(double t) {
     if (p_.frame.z_relative && has_origin_) est_.z -= origin_alt_;
     return;
   }
+  // The map coordinate and the origin have to live in the SAME frame. mapOrigin()
+  // is the UTM origin shifted into the map frame, which is the only subtraction
+  // that is correct for both a UTM map (offsets zero) and a judge-frame map.
   if (p_.frame.mode == "mgrs_absolute" || !has_origin_) {
-    return;  // already absolute UTM
-  }
-  if (p_.frame.mode == "enu_local") {
-    if (map_.empty()) {
-      // Dead reckoning is already a local ENU frame.
-      est_.z = (p_.frame.z_relative && has_origin_) ? est_.z - origin_alt_ : est_.z;
-      return;
-    }
-    double ex = 0.0, ny = 0.0;
-    utm_delta_to_enu(est_.x - origin_utm_.easting, est_.y - origin_utm_.northing, origin_lat_,
-                     origin_lon_, zone_, ex, ny);
-    est_.x = ex;
-    est_.y = ny;
+    // Already absolute in the map frame: nothing to subtract.
+  } else if (p_.frame.mode == "enu_local") {
+    // The map axes are already east/north, so the tangent-plane rotation is the
+    // identity and this collapses to the same subtraction as mgrs_relative. Kept
+    // as a separate branch so the intent is visible.
+    double ox = 0.0, oy = 0.0;
+    mapOrigin(ox, oy);
+    est_.x -= ox;
+    est_.y -= oy;
   } else {
-    est_.x -= origin_utm_.easting;
-    est_.y -= origin_utm_.northing;
+    double ox = 0.0, oy = 0.0;
+    mapOrigin(ox, oy);
+    est_.x -= ox;
+    est_.y -= oy;
   }
   if (p_.frame.z_relative) est_.z -= origin_alt_;
+
+  if (!positionInRange(est_.x, est_.y)) {
+    // Do not let a frame error reach the judge as if it were a measurement.
+    // Dead reckoning is worse than wrong but at least it is continuous.
+    est_.x = dr_x_;
+    est_.y = dr_y_;
+    est_.z = has_origin_ ? origin_alt_ : 0.0;
+    est_.along = s;
+    est_.cross = 0.0;
+    if (dead_reckoning_cycles_ > 0) --map_applied_cycles_;
+    ++dead_reckoning_cycles_;
+  }
+}
+
+bool Estimator::positionInRange(double x, double y) {
+  if (std::isfinite(x) && std::isfinite(y)) {
+    // The judge reference frame is UTM minus the first fix, so a correct answer
+    // stays within a few tens of km of the origin: the whole route is 4.7 km.
+    constexpr double kMaxPlausibleM = 1.0e5;
+    if (std::fabs(x) <= kMaxPlausibleM && std::fabs(y) <= kMaxPlausibleM) {
+      position_out_of_range_ = false;
+      return true;
+    }
+  }
+  position_out_of_range_ = true;
+  ++position_out_of_range_count_;
+  return false;
 }
 
 Estimate Estimator::estimate() const {

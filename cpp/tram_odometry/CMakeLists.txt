@@ -88,7 +88,10 @@ install(TARGETS odometry_node tram_bench
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/ DESTINATION include)
-install(DIRECTORY config launch models DESTINATION share/${PROJECT_NAME})
+# artifacts/ carries the route maps. Without it in the install set the node finds
+# a map only when it happens to be started from the repository root, which is how
+# a 300 km position error stayed invisible on the reviewer's machine.
+install(DIRECTORY config launch models artifacts DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -58,14 +58,21 @@ class OdometryNode : public rclcpp::Node {
 
     // Default location of the learned-corrector artifact: the installed share
     // directory, so `ros2 run tram_odometry odometry_node` works out of the box.
-    std::string model_dir = p_.ml.model_dir;
+    //
+    // Resolution order is absolute -> share directory -> working directory. The
+    // previous code only consulted the share directory when ml.model_dir was
+    // EMPTY, and params.yaml sets it to "models", so the fallback was dead code
+    // and the loaded descriptor depended on the launch directory: the trained
+    // artifact from the repository root, the all-zero stub from the package
+    // directory, nothing at all from an install tree. All three reported
+    // "ready" in the diagnostics.
+    std::string model_dir = resolve_asset(p_.ml.model_dir, "models");
     if (model_dir.empty() && p_.ml.enable) {
-      try {
-        model_dir = ament_index_cpp::get_package_share_directory("tram_odometry") + "/models";
-      } catch (const std::exception& e) {
-        RCLCPP_WARN(get_logger(), "cannot locate package share dir (%s); ML corrector off",
-                    e.what());
-      }
+      RCLCPP_ERROR(get_logger(),
+                   "ML artifact not found: ml.model_dir='%s' resolved to nothing "
+                   "(tried absolute, <share>/models, and the working directory). "
+                   "The corrector will fall back to physics only.",
+                   p_.ml.model_dir.c_str());
     }
 
     est_ = std::make_unique<Estimator>(p_, model_dir);
@@ -90,27 +97,27 @@ class OdometryNode : public rclcpp::Node {
     sub_front_ = create_subscription<tram_vehicle_msgs::msg::VelocitySensor>(
         p_.topics.front_bogie, vehicle_qos,
         [this](const tram_vehicle_msgs::msg::VelocitySensor::SharedPtr m) {
-          // The judge matches our output against the reference by header stamp
-          // with ~0.05 s tolerance, so the input stamp has to be carried through
-          // untouched rather than replaced by the node clock.
-          const double t = stamp_sec(m->header.stamp, *get_clock());
-          last_stamp_ = m->header.stamp;
+          // has_stamp_ gates the first publication: it must not happen before a
+          // real measurement has been seen. It is deliberately NOT used to build
+          // the output stamp any more; see cycle().
+          stamp_sec(m->header.stamp, *get_clock());
           has_stamp_ = true;
           // VelocitySensor.velocity carries no unit in the .msg file, so the
           // unit was established from the data: the peak over all 122 bags is
-          // 53.3, which is 14.8 m/s in km/h (a normal tram) but 192 km/h in
-          // m/s (impossible). The field is therefore km/h, which is also what
-          // the estimator expects, so the value is passed straight through.
-          est_->onWheelFront(t, m->velocity);
+          // 53.7, which is 14.9 m/s in km/h (a normal tram) but 191 km/h in
+          // m/s (impossible). Measured independently against GNSS over 79 runs,
+          // the median ratio v_wheel / v_gnss is 3.6243. The field is therefore
+          // km/h, and the jury confirmed it twice (docs/QA2.txt). The value is
+          // passed through unchanged; the estimator converts on ingest.
+          est_->onWheelFront(stamp_sec(m->header.stamp, *get_clock()), m->velocity);
         });
 
     sub_rear_ = create_subscription<tram_vehicle_msgs::msg::VelocitySensor>(
         p_.topics.rear_bogie, vehicle_qos,
         [this](const tram_vehicle_msgs::msg::VelocitySensor::SharedPtr m) {
-          const double t = stamp_sec(m->header.stamp, *get_clock());
-          last_stamp_ = m->header.stamp;
+          stamp_sec(m->header.stamp, *get_clock());
           has_stamp_ = true;
-          est_->onWheelRear(t, m->velocity);
+          est_->onWheelRear(stamp_sec(m->header.stamp, *get_clock()), m->velocity);
         });
 
     sub_driver_ = create_subscription<tram_vehicle_msgs::msg::DriverControllerCommand>(
@@ -128,11 +135,21 @@ class OdometryNode : public rclcpp::Node {
         p_.topics.gnss_fix, sensor_qos, [this](sensor_msgs::msg::NavSatFix::SharedPtr m) {
           // Humble's NavSatStatus has no satellite count, so it is reported as
           // unknown (-1) and the observer's sats gate is skipped.
-          est_->onGnssFix(stamp_sec(m->header.stamp, *get_clock()), m->latitude, m->longitude,
-                          m->altitude, -1, m->status.status,
-                          m->position_covariance_type == sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN
-                              ? m->position_covariance[0]
-                              : -1.0);
+        // sensor_msgs/msg/NavSatFix declares the four constants as
+        // COVARIANCE_UNKNOWN / COVARIANCE_APPROXIMATED / COVARIANCE_DIAGONAL_KNOWN /
+        // COVARIANCE_KNOWN. This used to read COVARIANCE_TYPE_DIAGONAL_KNOWN, which
+        // does not exist in that message, so the constant reference did not resolve.
+        //
+        // The gate is only advisory. Every bag in this dataset carries
+        // position_covariance_type = 0 (COVARIANCE_UNKNOWN): 73 023 rows of
+        // 30618_0652866c were checked. Treating UNKNOWN as "no usable covariance"
+        // is the right call, since -1.0 is what the estimator's quality check
+        // expects, but a fixed status must not reject an otherwise good fix.
+        est_->onGnssFix(stamp_sec(m->header.stamp, *get_clock()), m->latitude, m->longitude,
+                        m->altitude, -1, m->status.status,
+                        m->position_covariance_type == sensor_msgs::msg::NavSatFix::COVARIANCE_DIAGONAL_KNOWN
+                            ? m->position_covariance[0]
+                            : -1.0);
         });
     // GNSS velocity. The type is geometry_msgs/msg/TwistStamped in all 122 bags
     // (confirmed in every metadata.yaml), so only that one is subscribed: ROS
@@ -200,19 +217,18 @@ class OdometryNode : public rclcpp::Node {
     const Estimate e = est_->estimate();
 
     // The judge pairs our result with the reference by header.stamp using the
-    // nearest-neighbour rule with ~0.05 s tolerance, so we must republish the
-    // stamp of the input sample that produced this estimate, not the wall
-    // clock. Falling back to now() only happens if no input has arrived yet, in
-    // which case there is nothing meaningful to publish anyway.
-    builtin_interfaces::msg::Time hdr;
-    if (has_stamp_) {
-      hdr = last_stamp_;
-    } else {
-      const rclcpp::Time fallback(now(), RCL_ROS_TIME);
-      hdr = fallback;
-    }
-    const rclcpp::Time stamp = rclcpp::Time(hdr);
-    (void)stamp;
+    // nearest-neighbour rule with ~0.05 s tolerance, so the stamp has to be the
+    // time this estimate was actually computed for.
+    //
+    // It used to be the stamp of the last wheel message instead. The wheel topics
+    // are 10 Hz and this timer is 50 Hz, so all five publications inside one
+    // 100 ms window carried the same stamp, lagging the state by 0 to 80 ms with
+    // a mean of 40 ms - the same order as the judge's matching tolerance, and at
+    // 14 m/s the lag alone is 0.56 m of along-track error that no estimate is
+    // responsible for. Stamping with `t` is both the honest choice and the one
+    // that lands on the bag's own time grid.
+    const builtin_interfaces::msg::Time hdr =
+        rclcpp::Time(t, rclcpp::RCL_ROS_TIME).to_msg();
 
     // ---- velocity (m/s, longitudinal) ----
     tram_vehicle_msgs::msg::VelocitySensor vel;
@@ -338,6 +354,36 @@ class OdometryNode : public rclcpp::Node {
     add("gnss_fixes_seen", buf);
     std::snprintf(buf, sizeof(buf), "%d", est_->gnssPublished() ? 1 : 0);
     add("gnss_published", buf);
+    // Route-map frame diagnostics. A frame mix-up here is a ~300 km position
+    // error that every other key still reports as healthy, so the anchor, the
+    // frame offsets and the range violation get their own keys.
+    std::snprintf(buf, sizeof(buf), "%d", est_->mapAnchorValid() ? 1 : 0);
+    add("map_anchor_valid", buf);
+    std::snprintf(buf, sizeof(buf), "%.2f m", est_->mapAnchorM());
+    add("map_anchor_s", buf);
+    std::snprintf(buf, sizeof(buf), "%.2f", p_.path_map.frame_offset_e);
+    add("map_frame_offset_e", buf);
+    std::snprintf(buf, sizeof(buf), "%.2f", p_.path_map.frame_offset_n);
+    add("map_frame_offset_n", buf);
+    std::snprintf(buf, sizeof(buf), "%d", est_->positionOutOfRange() ? 1 : 0);
+    add("position_out_of_range", buf);
+    std::snprintf(buf, sizeof(buf), "%llu",
+                  static_cast<unsigned long long>(est_->positionOutOfRangeCount()));
+    add("position_out_of_range_count", buf);
+    std::snprintf(buf, sizeof(buf), "%llu",
+                  static_cast<unsigned long long>(est_->mapAppliedCycles()));
+    add("map_applied_cycles", buf);
+    std::snprintf(buf, sizeof(buf), "%llu",
+                  static_cast<unsigned long long>(est_->deadReckoningCycles()));
+    add("dead_reckoning_cycles", buf);
+    std::snprintf(buf, sizeof(buf), "%.3f", e.cross);
+    add("cross_track_m", buf);
+    // Heading uncertainty has to be readable from outside, otherwise "did the
+    // covariance grow while blind" cannot be answered from a log.
+    std::snprintf(buf, sizeof(buf), "%.6f rad^2", e.cov_heading);
+    add("cov_heading_rad2", buf);
+    std::snprintf(buf, sizeof(buf), "%.1f s", est_->headingBlindS());
+    add("heading_blind_s", buf);
     std::snprintf(buf, sizeof(buf), "%.3f", e.kappa_front);
     add("slip_front", buf);
     std::snprintf(buf, sizeof(buf), "%.3f", e.kappa_rear);
@@ -399,9 +445,10 @@ class OdometryNode : public rclcpp::Node {
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_position_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub_pose_;
 
-  /// Stamp of the most recent /vehicle/* message. The judge pairs our output
-  /// with the reference by this stamp, so it is carried through verbatim.
-  builtin_interfaces::msg::Time last_stamp_;
+  /// True once at least one /vehicle/* message has been seen. It gates the very
+  /// first publication: with use_sim_time the node clock is still 0 before that,
+  /// and a zero stamp is worse than no message at all. The output stamp itself is
+  /// the time the estimate was computed for, not an input stamp.
   bool has_stamp_ = false;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pub_diag_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_latency_;
