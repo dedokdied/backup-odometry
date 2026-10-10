@@ -9,13 +9,11 @@ dist/
 .cache/
 work/
 
-# The bag dataset is not in git.  It is ~824 MB of rosbag2 sqlite3 that the
-# organizers distribute separately; copy it to data/ and everything works.
+# The bag dataset (~824 MB of rosbag2 sqlite3) and the generated feature tables
+# are now tracked in git, so a fresh clone has everything the pipeline needs.
+# To restore them into an existing clone instead of cloning:
 #   robocopy <dataset>\data  data\   /E
 #   robocopy <dataset>\tram_vehicle_msgs  data\tram_vehicle_msgs  /E
-data/*/
-data/*.json
-data/README.md
 
 # Training tables are large and fully regenerable
 artifacts/tables/
@@ -43,8 +41,6 @@ models_moving/
 models_final_only/
 
 models_probe/
-
-data/features/
 
 train.log
 clip_stats.csv

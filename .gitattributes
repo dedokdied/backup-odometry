@@ -23,3 +23,8 @@ CMakeLists.txt text eol=lf
 
 # Trained weights are raw float32; line-ending translation would corrupt them.
 *.bin binary
+
+# rosbag2 sqlite3 bags. `* text=auto` already detects these as binary via the
+# NUL at offset 15, but be explicit: a CRLF rewrite inside a sqlite page would
+# silently corrupt 824 MB of recorded runs.
+*.db3 binary
