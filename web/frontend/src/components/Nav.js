@@ -1,0 +1,5 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { Link } from "react-router-dom";
+export default function Nav() {
+    return (_jsxs("nav", { className: "nav", children: [_jsx("span", { className: "brand", children: "\u0422\u0440\u0430\u043C\u0432\u0430\u0439\u043D\u044B\u0439 \u043F\u043E\u043B\u0438\u0433\u043E\u043D" }), _jsx(Link, { to: "/runs", children: "\u041F\u0440\u043E\u0433\u043E\u043D\u044B" }), _jsx(Link, { to: "/runs/new", children: "+ \u041F\u0440\u043E\u0433\u043E\u043D" }), _jsx(Link, { to: "/routes", children: "\u041C\u0430\u0440\u0448\u0440\u0443\u0442\u044B" }), _jsx(Link, { to: "/routes/new", children: "+ \u041C\u0430\u0440\u0448\u0440\u0443\u0442" }), _jsx(Link, { to: "/simulator", children: "\u0421\u0438\u043C\u0443\u043B\u044F\u0442\u043E\u0440" }), _jsx("a", { href: "http://localhost:8000/docs", target: "_blank", rel: "noreferrer", children: "Swagger" }), _jsx(Link, { to: "/login", style: { marginLeft: "auto" }, children: "\u0412\u0445\u043E\u0434" })] }));
+}
