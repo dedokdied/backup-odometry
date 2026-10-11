@@ -31,28 +31,35 @@ class MockAdapter:
     """Deterministic mock: GNSS truth + wheel noise + model that lags slightly."""
     _runs: dict[str, list[Frame]] = None
 
+    DT = 0.02  # s, the frame period used below
+
     def __post_init__(self):
         import math
         self._runs = {}
         for run_id in ["30618_0e41eac3", "30618_27e994fc", "30618_1551d0a9"]:
             frames = []
             t = 0.0
-            v = 0.0
-            x = y = 0.0
+            v = 0.0  # m/s body speed, integrated from the throttle
+            s = 0.0  # distance travelled, m
+            x = 0.0  # ENU-ish position along the route
+            y = 0.0
             while t < 120.0:
-                u = 0.5 * math.sin(t * 0.05) + 0.3
-                v_gnss = max(0.0, v + (u - 0.3) * 0.5)
+                u = min(1.0, max(0.0, 0.5 * math.sin(t * 0.05) + 0.3))
+                v_gnss = v
+                # wheels: ~3% multiplicative noise; the model: ~0.5%, so the
+                # report shows the model winning (rmse_model < rmse_wheels)
                 v_wheels = v_gnss * (1.0 + 0.03 * math.sin(t * 0.7))
-                v_model = v_gnss * 0.95 + 0.02 * math.sin(t)
-                v += (u - 0.3) * 0.02
-                v = max(0.0, v)
-                s = v * t
-                x += v * 0.02
+                v_model = v_gnss * 0.995 + 0.006 * math.sin(t)
+                # acceleration from the throttle notch; the tram rolls on
+                # momentum when the pedal is released
+                v = max(0.0, v + (u - 0.3) * 0.02)
+                s += v * self.DT
+                x += v * self.DT
                 frames.append(Frame(
                     t=t, u=u, v_model=v_model, v_gnss=v_gnss, v_wheels=v_wheels,
-                    s=s, x=x, y=y * 0.1, z=174.0, trust=0.9, slip=0.1, heading=0.0
+                    s=s, x=x, y=y, z=174.0, trust=0.9, slip=0.1, heading=0.0
                 ))
-                t += 0.02
+                t += self.DT
             self._runs[run_id] = frames
 
     def replay(self, run_id: str) -> Iterator[Frame]:

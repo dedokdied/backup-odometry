@@ -1,6 +1,8 @@
+// Same-origin by default: the Vite dev server proxies /api -> :8000 (vite.config.ts)
+// and nginx does the same in the container (web/frontend/nginx.conf). Override with
+// VITE_API_URL only when the backend lives on a different host.
 const API: string =
-  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ??
-  "http://localhost:8000";
+  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ?? "";
 
 export class ApiError extends Error {
   status: number;
@@ -10,10 +12,15 @@ export class ApiError extends Error {
   }
 }
 
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(API + path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 204) return undefined as T;

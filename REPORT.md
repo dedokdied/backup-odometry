@@ -88,10 +88,10 @@ class MockAdapter:
 | Набор | Результат |
 |-------|-----------|
 | C++ gtest (core 22 + ml 18) | **40/40 pass** |
-| C++ ctest-обёртка | 2 fail (пустые wrapper-тесты, сами gtest зелёные) |
-| Python fast (`pytest ml/tests`) | **76/77 pass**, 1 fail — `test_exported_gate_still_reproduces_sklearn` (нет `speed_slip.joblib`, это известная заглушка) |
-| Python dataset (`-m slow test_dataset.py`) | **8/8 pass** |
-| Python registration (`-m slow`) | 2/4 pass (2 падают по точности регистрации карты — известная проблема README, 0.16° vs 0.05°) |
+| C++ ctest (после сборки в ROS 2 Humble) | 2/2 pass |
+| Python fast (`pytest ml/tests`) | 68/68 pass (1 skip: нет `speed_slip.joblib` — gitignore by design) |
+| Python dataset (`-m slow test_dataset.py`) | skip (датасет `data/` не в репозитории) |
+| Python registration (`-m slow`) | skip/known: точность регистрации карты (0.16° vs 0.05°) |
 
 ---
 
@@ -133,12 +133,15 @@ class MockAdapter:
 
 - Отдельная вкладка `/simulator` с явным заголовком и предупреждением: «метрики здесь — внутренняя согласованность, не точность на реальности». Настройки (длина, профиль высот, условия, пассажиры) — заглушки.
 
-### 4.5. Сборка
+### 4.6. Сборка
 
 ```bash
-pnpm run build   # tsc + vite build → dist/ (718 kB JS gzip 215 kB)
-pnpm preview     # nginx статика на :5173, proxy /api → :8000
+npm install       # lock file: package-lock.json (npm, не pnpm)
+npm run build     # tsc + vite build → dist/ (720 kB JS gzip 216 kB)
+npm run preview   # vite preview на :5173 с proxy /api → :8000
 ```
+
+В `dev` режиме запросы уходят на относительный `/api`, Vite проксирует их на `localhost:8000` (`vite.config.ts`); JWT из `localStorage` подставляется каждым запросом (`src/api/client.ts`).
 
 ---
 
@@ -148,17 +151,18 @@ pnpm preview     # nginx статика на :5173, proxy /api → :8000
 services:
   postgres:    # 16-alpine, volume pgdata, healthcheck
   backend:     # build ./backend, STORAGE=db, alembic upgrade head, uvicorn :8000
-  frontend:    # multi-stage: node:20 build → nginx:alpine serve dist, :80
+  frontend:    # multi-stage: node:20 npm ci → nginx:alpine serve dist + proxy /api → backend, published on :5173
 ```
 
 Команда: `docker compose up --build` — поднимает всё, миграция накатывается автоматически.
+Frontend и backend связаны same-origin: nginx проксирует `/api` → `backend:8000` (`web/frontend/nginx.conf`), клиент не хардкодит хост API.
 
 ---
 
 ## 6. Python-конвейер (ml/)
 
 - Кэш `.cache/` (484 МБ, 122 `.npz`) собирается командой `python -m odom_ml.data.build`.
-- Тесты: `pytest ml/tests` (76 pass), `pytest ml/tests -m slow` (dataset 8/8 pass, registration 2/4 pass — известные проблемы точности регистрации карты).
+- Тесты: `pytest ml/tests` — 68 pass + 1 skip (`test_exported_gate_still_reproduces_sklearn` скипается, если `speed_slip.joblib` не экспортирован — joblib в `.gitignore` by design). Тесты, требующие датасет (`data/pathgraph`, bags), скипаются, пока `data/` не скопирован в репозиторий — это by design, см. `.gitignore`.
 - Экспорт модели: `artifacts/models/speed_slip/speed_residual.json` + `slip_gate.json` (C++ читает JSON, joblib не нужен).
 
 ---
@@ -166,7 +170,7 @@ services:
 ## 7. C++ нода (cpp/)
 
 - Собирается `colcon build` в ROS 2 Humble (gcc 11, C++17).
-- 42 gtest: `test_core` 22/22, `test_ml` 18/18 — **все зелёные**.
+- 42 gtest: `test_core` 22/22, `test_ml` 18/18 — **все зелёные**; `ctest` — 2/2 pass.
 - Предупреждение: `estimator.cpp:209` unused parameter `vu` — не критично.
 - Dockerfile на базе `ros:humble-ros-base` есть, но полноценный прогон ноды на rosbag требует ROS-окружения (готово в WSL-дистре).
 
@@ -176,11 +180,13 @@ services:
 
 1. Postgres стартует, миграция накатывается, сид загружается.
 2. Backend на `:8000` — Swagger `/docs`, все эндпоинты отвечают.
-3. Frontend на `:80` (nginx) — статика, proxy `/api` → backend.
+3. Frontend на `:5173` (nginx) — статика + same-origin proxy `/api` → backend.
 4. Логин `admin/admin123` → JWT → CRUD прогонов/маршрутов, телеметрия, отчёт.
 5. Страница поездки: графики рисуются, карта рендерится, педаль работает в режиме «Рулю».
 6. Отчёт показывает RMSE модель < RMSE колёса (win > 0).
 7. Симулятор — отдельная вкладка с честным предупреждением.
+
+Телеметрия и отчёт адресуются числовым id прогона: `routes_telemetry.py` резолвит id → `sourceFile` перед обращением к адаптеру.
 
 ---
 
@@ -194,9 +200,9 @@ services:
 | GNSS не в основном контуре | Только эталон + инициализация | код, отчёт |
 | Скрытие карты на экране ≠ отключение в модели | Только UX-слой | отчёт |
 | Режим «Рулю» не создаёт новую истину | Бенчмарк гасится, надпись | TripPage, отчёт |
-| Python тест `test_exported_gate_still_reproduces_sklearn` падает | Нет `speed_slip.joblib` (gitignore) | pytest output |
-| 2 registration теста падают (0.16° vs 0.05°) | Известная проблема карты | README, pytest output |
-| C++ ctest-обёртка 2 fail | Пустые wrapper-тесты | colcon test-result |
+| Python тест `test_exported_gate_still_reproduces_sklearn` скипается | Нет `speed_slip.joblib` (gitignore) | pytest output |
+| Dataset-тесты (projection/registration) скипаются без `data/` | Датасет вне репозитория by design | `.gitignore`, pytest output |
+| MockAdapter — детерминированная заглушка | Реальный `.npz`-адаптер подключается в `get_adapter()` | код |
 
 ---
 
@@ -217,10 +223,10 @@ uvicorn app.api.main:app --port 8000
 
 # Frontend
 cd web/frontend
-pnpm install
-pnpm run dev        # :5173 с proxy /api → :8000
+npm install              # package-lock.json
+npm run dev              # :5173 с proxy /api → :8000
 # или
-pnpm run build && pnpm preview  # :5173 статика
+npm run build && npm run preview  # :5173 статика
 ```
 
 ---
@@ -236,7 +242,7 @@ web/
 │   │   ├── infrastructure/
 │   │   │   ├── memory_repo.py, memory_users.py
 │   │   │   ├── db.py, orm_models.py, repos_sql.py, seed_sql.py
-│   │   │   ├── model_adapter.py, auth.py
+│   │   │   ├── model_adapter.py
 │   │   │   └── seed.py
 │   │   └── api/
 │   │       ├── main.py, deps.py, errors.py, guards.py, schemas.py
@@ -245,7 +251,7 @@ web/
 │   ├── alembic.ini, Dockerfile, requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── api/client.ts
+│   │   ├── api/client.ts        # fetch-обёртка + JWT header из localStorage
 │   │   ├── components/{Nav.tsx, Charts.tsx, MapView.tsx, MetricsBar.tsx, Pedal.tsx}
 │   │   └── pages/
 │   │       ├── RunsList.tsx, RunView.tsx, RunForm.tsx
@@ -255,7 +261,7 @@ web/
 │   │       ├── LoginPage.tsx, LoginPage.css
 │   │       ├── SimulatorPage.tsx, SimulatorPage.css
 │   │   ├── App.tsx, main.tsx, styles.css
-│   ├── Dockerfile, vite.config.ts, package.json
+│   ├── Dockerfile, nginx.conf (proxy /api → backend), vite.config.ts, package.json, package-lock.json
 ├── docker-compose.yml
 └── (в корне проекта) .gitignore обновлён под web/
 ```

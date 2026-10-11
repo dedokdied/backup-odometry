@@ -1,11 +1,31 @@
 """Telemetry schemas and endpoints."""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_repos
 from app.api.guards import require_user
 from app.infrastructure.model_adapter import Frame, get_adapter
 
 router = APIRouter(prefix="/api/runs", tags=["telemetry"])
+
+
+def _frames_for(run_id: str, deps) -> list[Frame]:
+    """Frames for a run, addressed either by numeric id or by sourceFile.
+
+    The UI addresses runs by their numeric id (that is what /api/runs returns),
+    while the adapter keys frames by the original bag/source name. Fall back to
+    the run's sourceFile so both spellings resolve.
+    """
+    frames = list(get_adapter().replay(run_id))
+    if frames:
+        return frames
+    try:
+        ident = int(run_id)
+    except ValueError:
+        return []
+    run = deps.runs.get(ident)
+    if run is None:
+        return []
+    return list(get_adapter().replay(run.sourceFile))
 
 
 @router.get("/{run_id}/telemetry", summary="Telemetry frames for a run",
@@ -15,21 +35,20 @@ def telemetry(
     from_t: float = Query(0.0, ge=0.0, alias="from"),
     to_t: float = Query(1e9, ge=0.0, alias="to"),
     step: int = Query(1, ge=1, le=100),
+    deps=Depends(get_repos),
     _: None = Depends(require_user),
 ):
-    frames = list(get_adapter().replay(run_id))
+    frames = _frames_for(run_id, deps)
     if not frames:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Run not found")
     frames = [f for f in frames if from_t <= f.t <= to_t]
     return [f.__dict__ for f in frames[::step]]
 
 
 @router.get("/{run_id}/events", summary="Events (slip, trust drops, etc.)")
-def events(run_id: str, _: None = Depends(require_user)):
-    frames = list(get_adapter().replay(run_id))
+def events(run_id: str, deps=Depends(get_repos), _: None = Depends(require_user)):
+    frames = _frames_for(run_id, deps)
     if not frames:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Run not found")
     ev = []
     for f in frames:
@@ -40,10 +59,9 @@ def events(run_id: str, _: None = Depends(require_user)):
 
 
 @router.get("/{run_id}/report", summary="Summary metrics for a run")
-def report(run_id: str, _: None = Depends(require_user)):
-    frames = list(get_adapter().replay(run_id))
+def report(run_id: str, deps=Depends(get_repos), _: None = Depends(require_user)):
+    frames = _frames_for(run_id, deps)
     if not frames:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Run not found")
     n = len(frames)
     v_mod = sum(f.v_model for f in frames) / n
